@@ -121,10 +121,22 @@ class ScaleWidget {
         const mpWidget = node.widgets.find(w => w.name === "dimension_megapixel");
         const widthWidget = node.widgets.find(w => w.name === "dimension_width");
         const heightWidget = node.widgets.find(w => w.name === "dimension_height");
+        const aspectRatioWidget = node.widgets.find(w => w.name === "aspect_ratio");
 
         if (!mpWidget || !widthWidget || !heightWidget) {
             return null;
         }
+
+        // Parse aspect ratio from widget value (e.g., "16:9 (Panorama)" -> [16, 9])
+        let aspectW = 16, aspectH = 9;
+        if (aspectRatioWidget && aspectRatioWidget.value) {
+            const match = aspectRatioWidget.value.match(/(\d+):(\d+)/);
+            if (match) {
+                aspectW = parseInt(match[1]);
+                aspectH = parseInt(match[2]);
+            }
+        }
+        const aspectRatio = aspectW / aspectH;
 
         // Determine calculation mode and base dimensions
         let baseW, baseH, baseMp;
@@ -132,18 +144,26 @@ class ScaleWidget {
         const useWidth = widthWidget.value.on;
         const useHeight = heightWidget.value.on;
 
-        // Simplified logic - just show current dimensions from widgets
-        // In reality, this would duplicate the Python logic, but for tooltip we approximate
+        // Calculate base dimensions with proper aspect ratio handling
         if (useWidth && useHeight) {
+            // Both W+H specified - use as-is
             baseW = widthWidget.value.value;
             baseH = heightWidget.value.value;
         } else if (useWidth) {
+            // Width specified - calculate height from aspect ratio
             baseW = widthWidget.value.value;
-            baseH = widthWidget.value.value; // Approximate - actual depends on aspect ratio
+            baseH = Math.round(baseW / aspectRatio);
         } else if (useHeight) {
-            baseW = heightWidget.value.value;
+            // Height specified - calculate width from aspect ratio
             baseH = heightWidget.value.value;
+            baseW = Math.round(baseH * aspectRatio);
+        } else if (useMp) {
+            // Megapixel mode - calculate dimensions from MP and aspect ratio
+            const targetMp = mpWidget.value.value * 1_000_000;
+            baseH = Math.sqrt(targetMp / aspectRatio);
+            baseW = baseH * aspectRatio;
         } else {
+            // Default mode - use 1920x1080
             baseW = 1920;
             baseH = 1080;
         }
@@ -297,7 +317,6 @@ class ScaleWidget {
         const margin = 15;
         const padding = 8;
         const lineHeight = 16;
-        const tooltipWidth = width - margin * 2;
 
         ctx.save();
 
@@ -311,6 +330,18 @@ class ScaleWidget {
             `After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`
         ];
 
+        // Measure text width to ensure tooltip background fits all content
+        ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
+        let maxTextWidth = 0;
+        lines.forEach(line => {
+            const textWidth = ctx.measureText(line).width;
+            if (textWidth > maxTextWidth) {
+                maxTextWidth = textWidth;
+            }
+        });
+
+        // Calculate tooltip dimensions with dynamic width
+        const tooltipWidth = Math.min(maxTextWidth + padding * 2, width - margin * 2);
         const tooltipHeight = lines.length * lineHeight + padding * 2;
 
         // Draw tooltip background
@@ -383,13 +414,13 @@ class ScaleWidget {
         }
 
         if (event.type === "pointermove") {
-            // Clear any existing timeout
+            // Clear any existing safety timeout
             if (this.tooltipTimeout) {
                 clearTimeout(this.tooltipTimeout);
                 this.tooltipTimeout = null;
             }
 
-            // Update hover state
+            // Update hover state based on mouse position
             const wasHovering = this.isHovering;
             this.isHovering = this.isInBounds(pos, this.hitAreas.slider) ||
                              this.isInBounds(pos, this.hitAreas.handle) ||
@@ -407,29 +438,32 @@ class ScaleWidget {
                 node.setDirtyCanvas(true);
             }
 
-            // Set timeout to hide tooltip after mouse stops moving (500ms)
+            // Safety timeout: hide tooltip after 2 seconds of no mouse movement
+            // This handles cases where pointerleave doesn't fire (e.g., switching windows)
             if (this.isHovering) {
                 this.tooltipTimeout = setTimeout(() => {
                     this.isHovering = false;
                     node.setDirtyCanvas(true);
-                }, 500);
+                }, 2000);
             }
         }
 
         if (event.type === "pointerup") {
             this.isDragging = false;
             this.mouseDowned = null;
-            // Hide tooltip shortly after mouse release
+            // Start safety timeout after mouse release
             if (this.tooltipTimeout) {
                 clearTimeout(this.tooltipTimeout);
             }
-            this.tooltipTimeout = setTimeout(() => {
-                this.isHovering = false;
-                node.setDirtyCanvas(true);
-            }, 300);
+            if (this.isHovering) {
+                this.tooltipTimeout = setTimeout(() => {
+                    this.isHovering = false;
+                    node.setDirtyCanvas(true);
+                }, 2000);
+            }
         }
 
-        // Handle mouse leaving widget area
+        // Handle mouse leaving widget area - immediately hide tooltip
         if (event.type === "pointerleave" || event.type === "pointerout") {
             if (this.tooltipTimeout) {
                 clearTimeout(this.tooltipTimeout);
