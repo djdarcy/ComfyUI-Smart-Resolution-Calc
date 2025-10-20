@@ -1,0 +1,15 @@
+{
+  "repokit_managed": true,
+  "generated_by": "repokit",
+  "version": "0.4.3",
+  "created_at": "2025-10-19T17:43:30.146421Z",
+  "project_name": "C:/code/smart-resolution-calc-repo",
+  "language": "python",
+  "branch_strategy": "simple",
+  "private_branch": "private",
+  "description": "Smart Resolution Calculator for ComfyUI - Flexible resolution and latent generation with toggle-based dimension inputs, automatic calculation of missing values, and rgthree-style compact widgets. Primary use case: specify aspect ratio + height to auto-calculate width for precise image generation.",
+  "author": {
+    "name": "Dustin",
+    "email": "6962246+djdarcy@users.noreply.github.com"
+  }
+}
