@@ -151,3 +151,4 @@ test-runs/
 private/temp/
 test_runs/
 private/notes/
+.repokit.json
