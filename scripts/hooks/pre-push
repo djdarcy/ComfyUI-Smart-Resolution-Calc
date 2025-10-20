@@ -34,20 +34,27 @@ echo -e "${GREEN}✓${NC} Python syntax check passed"
 # RUN TESTS
 # =============================================================================
 echo ""
-echo -e "${BLUE}Running fast tests...${NC}"
+echo -e "${BLUE}Checking for tests...${NC}"
 
-# Run fast tests using run_tests.py (default runs fast tests only)
-if python run_tests.py 2>/dev/null; then
-    echo -e "${GREEN}✓${NC} All fast tests passed"
-else
-    echo -e "${YELLOW}⚠${NC} Some tests failed"
-    if [[ "$CURRENT_BRANCH" == "main" ]] || [[ "$CURRENT_BRANCH" == "master" ]]; then
-        echo -e "${RED}❌ BLOCKED: Cannot push to main with failing tests${NC}"
-        exit 1
+# Only run tests if run_tests.py exists
+if [ -f "run_tests.py" ]; then
+    echo -e "${BLUE}Running fast tests...${NC}"
+    # Run fast tests using run_tests.py (default runs fast tests only)
+    if python run_tests.py 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} All fast tests passed"
     else
-        echo "  Consider fixing tests before pushing"
-        echo "  Run 'python run_tests.py' for full test suite"
+        echo -e "${YELLOW}⚠${NC} Some tests failed"
+        if [[ "$CURRENT_BRANCH" == "main" ]] || [[ "$CURRENT_BRANCH" == "master" ]]; then
+            echo -e "${RED}❌ BLOCKED: Cannot push to main with failing tests${NC}"
+            exit 1
+        else
+            echo "  Consider fixing tests before pushing"
+            echo "  Run 'python run_tests.py' for full test suite"
+        fi
     fi
+else
+    echo -e "${YELLOW}⚠${NC} No test suite found (run_tests.py not present)"
+    echo "  Skipping test validation"
 fi
 
 # =============================================================================
