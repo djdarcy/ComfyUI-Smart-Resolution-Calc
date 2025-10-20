@@ -1,11 +1,11 @@
 # ComfyUI Smart Resolution Calculator
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-orange.svg)](https://github.com/comfyanonymous/ComfyUI)
+[![ComfyUI Registry](https://img.shields.io/badge/ComfyUI-Registry-green.svg)](https://registry.comfy.org/publishers/djdarcy/nodes/comfyui-smart-resolution-calc)
 [![GitHub release](https://img.shields.io/github/v/release/djdarcy/ComfyUI-Smart-Resolution-Calc?include_prereleases&label=version)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Flexible resolution and latent generation for ComfyUI with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
+Flexible resolution and latent generation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
 
 ## Overview
 
@@ -19,12 +19,13 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
+- **Scale multiplier (v0.1.2+)** - Scale dimensions up/down (0-10x) with custom widget and real-time preview
 - **Compact custom widgets** - rgthree-style height controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
 - **Visual preview** - See exact dimensions and aspect ratio before generation
-- **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64)
+- **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64, or "Exact")
 - **Debug logging** - Python + JavaScript debug modes for troubleshooting
 - **Workflow persistence** - Widget states save/load with workflows
 
@@ -141,6 +142,44 @@ Each dimension has a compact widget with toggle (LEFT) and value (RIGHT):
 - **[-]** button: Decrement (MP: -0.1, W/H: -8px)
 - **Value**: Click to type exact number
 - **[+]** button: Increment (MP: +0.1, W/H: +8px)
+
+### Scale Multiplier (v0.1.2+)
+
+Apply uniform scaling to calculated dimensions:
+
+**Scale Widget**:
+- **Slider**: Drag handle to adjust scale (1.0x visually centered)
+- **Value Display**: Click to type exact scale value
+- **Range**: 0-10x (can type higher values)
+- **Steps**: 0.05x below 1.0, 0.1x at/above 1.0
+- **Default**: 1.0x (no scaling)
+
+**Real-time Tooltip**:
+- Hover over scale widget to see dimension preview
+- Shows base dimensions (before scale)
+- Shows scaled dimensions (after scale)
+- Shows final dimensions (after divisibility rounding)
+- Updates as you drag the slider
+
+**Use Cases**:
+- Quickly test multiple resolutions without changing base dimensions
+- Downscale for faster iterations (0.5x = half resolution)
+- Upscale for final renders (2.0x = double resolution)
+- Fine-tune dimensions while maintaining aspect ratio
+
+**Example**: Height 1280 + AR 16:9 + Scale 0.5x
+- Base: 2275 × 1280 (from AR calculation)
+- Scaled: 1137 × 640 (multiplied by 0.5)
+- Final: 1136 × 640 (rounded to divisibility)
+
+### Divisibility Override (v0.1.2+)
+
+Choose how dimensions are rounded:
+
+- **8/16/32/64**: Round to nearest multiple (ensures model compatibility)
+- **Exact**: No rounding (use calculated dimensions as-is)
+
+Use "Exact" when you need precise dimensions that don't require model compatibility rounding.
 
 ### Outputs
 
