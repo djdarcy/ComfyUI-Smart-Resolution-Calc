@@ -13,33 +13,35 @@
             "justMyCode": true
         },
         {
-            "name": "Python: Module",
-            "type": "python",
-            "request": "launch",
-            "module": "C:/code/smart-resolution-calc-repo",
-            "console": "integratedTerminal",
-            "justMyCode": true
-        },
-        {
             "name": "Python: Current File with Arguments",
             "type": "python",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                // Add your arguments here
-                // Examples:
-                // "--input", "${workspaceFolder}/data/input.txt",
-                // "--output", "${workspaceFolder}/data/output.txt",
-                // Use VS Code's input picker to add arguments at runtime
+                // Add your arguments here, or use VS Code's input picker at runtime
                 "${command:pickArgs}"
-            ]
-        }
-    ],
-    "compounds": [
+            ],
+            "justMyCode": true
+        },
         {
-            "name": "Server/Client",
-            "configurations": ["Python: Module", "Python: Current File"]
+            "name": "ComfyUI: Debug This Node",
+            "type": "python",
+            "request": "launch",
+            "program": "${env:COMFYUI_PATH}/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${env:COMFYUI_PATH}",
+            "env": {
+                "COMFY_DEBUG_SMART_RES_CALC": "true"
+            },
+            "args": [
+                // Common ComfyUI arguments (uncomment as needed):
+                // "--listen", "127.0.0.1",
+                // "--port", "8188",
+                // "--auto-launch",
+                // "--disable-xformers",
+            ]
         }
     ]
 }

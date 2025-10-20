@@ -1,0 +1,42 @@
+name: Publish to ComfyUI Registry
+
+# Automatically publish to registry when pyproject.toml version changes
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pyproject.toml'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    name: Publish Custom Node to Registry
+
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v4
+
+      - name: Publish Custom Node
+        uses: Comfy-Org/publish-node-action@main
+        with:
+          ## Add your own personal access token to your Github Repository secrets
+          ## and reference it below. Please see the readme for more information.
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+
+# Setup Instructions:
+# 1. Create publisher account at https://registry.comfy.org/
+# 2. Generate a personal access token from the registry
+# 3. Add the token as a repository secret:
+#    - Go to: Settings → Secrets and variables → Actions
+#    - Click "New repository secret"
+#    - Name: REGISTRY_ACCESS_TOKEN
+#    - Value: Your token from the registry
+# 4. Update PublisherId in pyproject.toml with your publisher ID
+# 5. Push changes to main branch - this workflow will auto-publish
+
+# To publish a new version:
+# 1. Update the version field in pyproject.toml
+# 2. Commit and push to main branch
+# 3. Workflow will automatically publish to registry

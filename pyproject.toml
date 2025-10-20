@@ -1,0 +1,35 @@
+[project]
+name = "comfyui-smart-resolution-calc"
+description = "Flexible resolution and latent generation for ComfyUI with toggle-based dimension inputs and automatic calculation of missing values"
+version = "0.1.1-alpha"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+# No pip dependencies - all dependencies provided by ComfyUI
+dependencies = []
+
+# Optional development dependencies
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc"
+Issues = "https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/issues"
+Changelog = "https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases"
+Documentation = "https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc#readme"
+
+# ComfyUI Registry Configuration
+# See: https://docs.comfy.org/registry/publishing
+[tool.comfy]
+PublisherId = "djdarcy"
+DisplayName = "Smart Resolution Calculator"
+Icon = ""
+
+# Publishing: Update version in this file and push to main branch
+# GitHub Actions will automatically publish to ComfyUI Registry
