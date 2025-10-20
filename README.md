@@ -2,6 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-orange.svg)](https://github.com/comfyanonymous/ComfyUI)
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Flexible resolution and latent generation for ComfyUI with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.

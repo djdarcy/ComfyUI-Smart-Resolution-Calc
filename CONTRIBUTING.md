@@ -69,6 +69,45 @@ To use the "ComfyUI: Debug This Node" configuration:
 
 5. ComfyUI will launch with debug logging enabled, and your breakpoints will be hit when the node executes
 
+### Git Hooks and Version Management
+
+This project uses automatic version tracking via git hooks. Version information is automatically updated on every commit.
+
+**Installing Git Hooks** (Recommended for contributors):
+
+```bash
+# From project root
+./scripts/install-hooks.sh
+```
+
+Choose option 2 (Standard with security - recommended) for:
+- Automatic version.py updates before each commit
+- Post-commit hash correction
+- Branch protection (prevents private files on public branches)
+- Large file blocking (>10MB)
+
+**What the hooks do**:
+- **pre-commit**: Updates `version.py` with current branch, build count, date, and commit hash
+- **post-commit**: Corrects the commit hash after the commit is created
+- **pre-push**: Optional quality checks
+
+**Manual version update** (if hooks not installed):
+
+```bash
+./scripts/update-version.sh
+```
+
+**Version format**: `VERSION_BRANCH_BUILD-YYYYMMDD-COMMITHASH`
+
+Example: `0.1.0-alpha_main_10-20251020-88bd441`
+
+**Bypassing hooks** (emergency only):
+```bash
+git commit --no-verify
+```
+
+Note: If you bypass hooks, version.py won't be updated automatically.
+
 ## Code Style
 
 - Follow PEP 8 for Python code
