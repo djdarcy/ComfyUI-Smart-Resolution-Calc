@@ -68,12 +68,19 @@ class SmartResolutionCalc:
         return {
             "required": {
                 "aspect_ratio": (aspect_ratios, {"default": "3:4 (Golden Ratio)"}),
-                "divisible_by": (["8", "16", "32", "64"], {"default": "16"}),
+                "divisible_by": (["Exact", "8", "16", "32", "64"], {"default": "16"}),
                 "custom_ratio": ("BOOLEAN", {"default": False, "label_on": "Enable", "label_off": "Disable"}),
             },
             "optional": {
                 "custom_aspect_ratio": ("STRING", {"default": "16:9"}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
+                "scale": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "step": 0.1,
+                    "display": "slider"
+                }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
             # Widget data structure: {'on': bool, 'value': number}
@@ -93,7 +100,7 @@ class SmartResolutionCalc:
         self.device = comfy.model_management.intermediate_device()
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
-                            custom_aspect_ratio="16:9", batch_size=1, **kwargs):
+                            custom_aspect_ratio="16:9", batch_size=1, scale=1.0, **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -145,39 +152,39 @@ class SmartResolutionCalc:
 
         # Parse aspect ratio
         w_ratio, h_ratio = map(int, ratio_str.split(':'))
-        divisor = int(divisible_by)
+
+        # Handle divisibility - "Exact" means no rounding (divisor=1)
+        if divisible_by == "Exact":
+            divisor = 1
+        else:
+            divisor = int(divisible_by)
 
         logger.debug(f"Parsed: w_ratio={w_ratio}, h_ratio={h_ratio}, divisor={divisor}")
 
         # Calculate based on active toggles (priority order)
         if use_width and use_height:
             # Both dimensions specified - calculate megapixels, actual aspect may differ
-            w = round(width_val / divisor) * divisor
-            h = round(height_val / divisor) * divisor
-            mp = (w * h) / 1_000_000
+            w = width_val
+            h = height_val
             mode = "Width + Height"
-            info_detail = f"Calculated MP: {mp:.2f}"
-            logger.debug(f"Mode: {mode} - width={width_val} → {w}, height={height_val} → {h}")
+            info_detail_base = f"Base W: {w} × H: {h}"
+            logger.debug(f"Mode: {mode} - width={width_val}, height={height_val}")
 
         elif use_width:
             # Width + aspect ratio → calculate height
-            h_calculated = int(width_val * h_ratio / w_ratio)
-            h = round(h_calculated / divisor) * divisor
-            w = round(width_val / divisor) * divisor
-            mp = (w * h) / 1_000_000
+            w = width_val
+            h = int(width_val * h_ratio / w_ratio)
             mode = "Width + Aspect Ratio"
-            info_detail = f"Calculated Height: {h} | MP: {mp:.2f}"
-            logger.debug(f"Mode: {mode} - width={width_val} → {w}, calculated h={h_calculated} → {h}")
+            info_detail_base = f"Calculated H: {h}"
+            logger.debug(f"Mode: {mode} - width={width_val}, calculated h={h}")
 
         elif use_height:
             # Height + aspect ratio → calculate width
-            w_calculated = int(height_val * w_ratio / h_ratio)
-            w = round(w_calculated / divisor) * divisor
-            h = round(height_val / divisor) * divisor
-            mp = (w * h) / 1_000_000
+            w = int(height_val * w_ratio / h_ratio)
+            h = height_val
             mode = "Height + Aspect Ratio"
-            info_detail = f"Calculated Width: {w} | MP: {mp:.2f}"
-            logger.debug(f"Mode: {mode} - height={height_val} → {h}, calculated w={w_calculated} → {w}")
+            info_detail_base = f"Calculated W: {w}"
+            logger.debug(f"Mode: {mode} - height={height_val}, calculated w={w}")
 
         elif use_mp:
             # Megapixels + aspect ratio → calculate both dimensions
@@ -185,11 +192,8 @@ class SmartResolutionCalc:
             dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
             w = int(dimension * w_ratio)
             h = int(dimension * h_ratio)
-            w = round(w / divisor) * divisor
-            h = round(h / divisor) * divisor
-            mp = (w * h) / 1_000_000  # Recalculate after rounding
             mode = "Megapixels + Aspect Ratio"
-            info_detail = f"Calculated W: {w} × H: {h}"
+            info_detail_base = f"Calculated W: {w} × H: {h}"
             logger.debug(f"Mode: {mode} - mp={megapixel_val} → w={w}, h={h}")
 
         else:
@@ -198,18 +202,49 @@ class SmartResolutionCalc:
             dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
             w = int(dimension * w_ratio)
             h = int(dimension * h_ratio)
-            w = round(w / divisor) * divisor
-            h = round(h / divisor) * divisor
-            mp = (w * h) / 1_000_000
             mode = "Default (1.0 MP)"
-            info_detail = f"W: {w} × H: {h}"
+            info_detail_base = f"W: {w} × H: {h}"
             logger.debug(f"Mode: {mode} - no toggles active, defaulting to 1.0 MP")
+
+        # Apply scale multiplier
+        # Clamp scale to minimum 0.0 (user requirement: allow 0 but it's clamped by default)
+        scale = max(0.0, scale)
+
+        # Warn if scale is very high
+        if scale > 10.0:
+            logger.warning(f"Scale {scale}x exceeds recommended maximum (10x). This may cause out-of-memory errors.")
+            print(f"[SmartResCalc] WARNING: Scale {scale}x is very high and may exceed GPU limits")
+
+        # Apply scale to base dimensions
+        w_scaled = int(w * scale)
+        h_scaled = int(h * scale)
+
+        # Warn if scaled dimensions exceed typical GPU limits
+        if w_scaled > 16384 or h_scaled > 16384:
+            logger.warning(f"Scaled dimensions {w_scaled}×{h_scaled} exceed typical GPU texture limits (16384px)")
+            print(f"[SmartResCalc] WARNING: Dimensions {w_scaled}×{h_scaled} may exceed GPU limits")
+
+        # Apply divisibility rounding
+        w = round(w_scaled / divisor) * divisor
+        h = round(h_scaled / divisor) * divisor
+
+        # Recalculate megapixels after scaling and rounding
+        mp = (w * h) / 1_000_000
+
+        # Build info detail string
+        if scale != 1.0:
+            info_detail = f"{info_detail_base} | Scale: {scale}x | Final: {w}×{h} | MP: {mp:.2f}"
+        else:
+            info_detail = f"{info_detail_base} | MP: {mp:.2f}"
 
         # Generate outputs
         resolution = f"{w} x {h}"
         preview = self.create_preview_image(w, h, resolution, ratio_display, mp)
         latent = self.create_latent(w, h, batch_size)
-        info = f"Mode: {mode} | {info_detail} | Div: {divisor}"
+
+        # Format divisibility info
+        div_info = "Exact" if divisible_by == "Exact" else str(divisor)
+        info = f"Mode: {mode} | {info_detail} | Div: {div_info}"
 
         # ALWAYS log final results
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")
