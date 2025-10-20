@@ -274,6 +274,10 @@ Custom JavaScript widgets with compact 24px height design:
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) - The amazing UI framework
 - ComfyUI community - Testing and feedback
 
+## Development
+
+For contributors: This project uses Git-RepoKit hooks for automatic version tracking. Run `./scripts/install-hooks.sh` to set up versioning hooks.
+
 ## License
 
 Smart Resolution Calculator, Copyright (C) 2025 Dustin Darcy
