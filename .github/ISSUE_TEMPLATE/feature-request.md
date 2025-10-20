@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for C:/code/smart-resolution-calc-repo
+about: Suggest an idea for Smart Resolution Calculator
 title: "[FEATURE] "
 labels: enhancement
 assignees: ''

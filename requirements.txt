@@ -1,8 +1,16 @@
-# Project dependencies
-# Add your dependencies here
+# Smart Resolution Calculator - ComfyUI Custom Node
+#
+# RUNTIME DEPENDENCIES:
+# This node has no pip dependencies. All required packages (PyTorch, PIL, numpy)
+# are provided by ComfyUI when the node is loaded.
+#
+# INSTALLATION:
+# Copy this folder to ComfyUI/custom_nodes/smart-resolution-calc/
+# Do NOT use pip install - this is not a PyPI package.
 
-# Development dependencies
-pytest>=7.0.0
-black>=23.0.0
-flake8>=6.0.0
-mypy>=1.0.0
+# DEVELOPMENT DEPENDENCIES (optional, for contributors):
+# Uncomment if you want to use these tools for code quality
+# pytest>=7.0.0     # Unit testing (no tests currently)
+# black>=23.0.0     # Code formatting
+# flake8>=6.0.0     # Linting
+# mypy>=1.0.0       # Type checking

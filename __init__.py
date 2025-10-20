@@ -15,8 +15,9 @@ Features:
 """
 
 from .py.smart_resolution_calc import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from .version import __version__, VERSION, BASE_VERSION, get_version, get_base_version
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', '__version__', 'VERSION', 'BASE_VERSION']
 
 # Web directory for JavaScript widgets
 WEB_DIRECTORY = "./web"
