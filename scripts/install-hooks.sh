@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Install git hooks for DazzleTreeLib project
+# Install git hooks from Git-RepoKit versioning system
 # Provides options for basic or standard hook installation
 #
 
@@ -182,7 +182,7 @@ echo "  • pre-commit hook updates version.py BEFORE each commit"
 echo "  • post-commit hook updates with actual commit hash"
 echo "  • To bypass hooks temporarily: git commit --no-verify"
 echo "  • Version format: VERSION_BRANCH_BUILD-DATE-HASH"
-echo "  • View version: python -c \"from dazzletreelib.version import __version__; print(__version__)\""
+echo "  • View version: python -c \"import sys; sys.path.insert(0, '.'); from version import __version__; print(__version__)\""
 
 if [ "$INSTALL_STANDARD" = true ]; then
     echo ""

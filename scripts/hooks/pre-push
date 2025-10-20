@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Pre-push hook for DazzleTreeLib
+# Pre-push hook from Git-RepoKit versioning system
 # Runs basic quality checks before pushing to remote
 #
 
@@ -23,7 +23,7 @@ echo ""
 # PYTHON SYNTAX CHECK
 # =============================================================================
 echo -e "${BLUE}Checking Python syntax...${NC}"
-python -m py_compile dazzletreelib/*.py dazzletreelib/**/*.py tests/*.py 2>/dev/null || {
+python -m py_compile py/*.py *.py 2>/dev/null || {
     echo -e "${RED}❌ Python syntax errors found${NC}"
     echo "Fix syntax errors before pushing"
     exit 1
@@ -57,14 +57,14 @@ echo ""
 echo -e "${BLUE}Checking for debug statements...${NC}"
 
 # Check for pdb statements
-if grep -r "import pdb\|pdb\.set_trace()" dazzletreelib/ --include="*.py" 2>/dev/null; then
+if grep -r "import pdb\|pdb\.set_trace()" py/ --include="*.py" 2>/dev/null; then
     echo -e "${RED}❌ ERROR: Debugger statements found${NC}"
     echo "Remove all pdb statements before pushing"
     exit 1
 fi
 
 # Check for excessive print statements (warning only)
-print_count=$(grep -r "print(" dazzletreelib/ --include="*.py" 2>/dev/null | grep -v "#.*print(" | wc -l)
+print_count=$(grep -r "print(" py/ --include="*.py" 2>/dev/null | grep -v "#.*print(" | wc -l)
 if [ "$print_count" -gt 20 ]; then
     echo -e "${YELLOW}⚠${NC} Warning: Many print() statements found ($print_count)"
     echo "  Consider using logging instead"

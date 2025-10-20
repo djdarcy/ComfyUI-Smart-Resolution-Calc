@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-orange.svg)](https://github.com/comfyanonymous/ComfyUI)
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
+[![GitHub release](https://img.shields.io/github/v/release/djdarcy/ComfyUI-Smart-Resolution-Calc?include_prereleases&label=version)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Flexible resolution and latent generation for ComfyUI with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
@@ -11,11 +11,15 @@ Flexible resolution and latent generation for ComfyUI with compact custom widget
 
 Smart Resolution Calculator brings intuitive dimension control to ComfyUI workflows. Instead of manually calculating widths from heights or dimensions from megapixels, simply enable the values you know and let the node compute the rest. Compact rgthree-style widgets keep your workflow clean while providing powerful calculation modes.
 
+![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
+
+*Example workflow showing the Smart Resolution Calculator with HEIGHT enabled, calculating width automatically from aspect ratio, and outputting to ClownsharkKSampler.*
+
 ## Features
 
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
-- **Compact custom widgets** - rgthree-style 24px height controls with inline toggles
+- **Compact custom widgets** - rgthree-style height controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
@@ -32,7 +36,22 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ## Installation
 
-### Quick Start
+### ComfyUI Registry (Recommended)
+
+The easiest way to install is through the ComfyUI Registry:
+
+1. Open **ComfyUI Manager** in your ComfyUI interface
+2. Search for **"Smart Resolution Calculator"** or **"djdarcy"**
+3. Click **Install** and restart ComfyUI
+
+The node will appear under: **Smart Resolution → Smart Resolution Calculator**
+
+Alternatively, use the command line:
+```bash
+comfy node install comfyui-smart-resolution-calc
+```
+
+### Git Clone
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -41,11 +60,9 @@ git clone https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc.git
 
 Then restart ComfyUI or use **Manager → Refresh Node Definitions**.
 
-The node will appear under: **Smart Resolution → Smart Resolution Calculator**
-
 ### Manual Installation
 
-1. Download and extract to `ComfyUI/custom_nodes/ComfyUI-Smart-Resolution-Calc/`
+1. Download the [latest release](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases) and extract to `ComfyUI/custom_nodes/ComfyUI-Smart-Resolution-Calc/`
 2. Restart ComfyUI
 3. Find the node in: **Smart Resolution → Smart Resolution Calculator**
 
