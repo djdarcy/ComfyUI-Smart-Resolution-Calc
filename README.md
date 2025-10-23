@@ -13,7 +13,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
-*Example workflow showing the Smart Resolution Calculator with HEIGHT enabled, calculating width automatically from aspect ratio, and outputting to ClownsharkKSampler.*
+*Example workflow showing the Smart Resolution Calculator with WIDTH enabled, calculating height automatically from aspect ratio, and outputting to ClownsharKSampler.*
 
 ## Features
 
