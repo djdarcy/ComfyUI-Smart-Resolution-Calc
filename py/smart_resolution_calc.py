@@ -4,6 +4,7 @@ import torch
 import comfy.model_management
 import logging
 import os
+from math import gcd
 
 # Configure debug logging
 logger = logging.getLogger('SmartResolutionCalc')
@@ -99,6 +100,24 @@ class SmartResolutionCalc:
     def __init__(self):
         self.device = comfy.model_management.intermediate_device()
 
+    def format_aspect_ratio(self, width, height):
+        """
+        Format aspect ratio as simplified W:H notation using GCD.
+
+        Returns a simplified aspect ratio that users can manually enter
+        into the aspect ratio field for future use.
+
+        Examples:
+            1920 × 1080 → "16:9"
+            1024 × 1024 → "1:1"
+            3840 × 2160 → "16:9"
+            1997 × 1123 → "1997:1123" (coprime, already reduced)
+        """
+        divisor = gcd(width, height)
+        w_ratio = width // divisor
+        h_ratio = height // divisor
+        return f"{w_ratio}:{h_ratio}"
+
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0, **kwargs):
         """
@@ -166,9 +185,12 @@ class SmartResolutionCalc:
             # Both dimensions specified - calculate megapixels, actual aspect may differ
             w = width_val
             h = height_val
-            mode = "Width + Height"
+            # Calculate and display actual aspect ratio (GCD-reduced for reusability)
+            actual_ar = self.format_aspect_ratio(w, h)
+            ratio_display = actual_ar  # Use calculated AR for preview instead of preset
+            mode = f"Width + Height (AR: {actual_ar})"
             info_detail_base = f"Base W: {w} × H: {h}"
-            logger.debug(f"Mode: {mode} - width={width_val}, height={height_val}")
+            logger.debug(f"Mode: Width + Height - width={width_val}, height={height_val}, actual AR={actual_ar}")
 
         elif use_width:
             # Width + aspect ratio → calculate height

@@ -62,6 +62,11 @@ class ScaleWidget {
         this.leftPortion = 0.3;  // 30% for 0-1.0
         this.rightPortion = 0.7; // 70% for 1.0-10.0
 
+        // Configurable step sizes
+        this.leftStep = 0.05;   // Step size below 1.0x
+        this.rightStep = 0.1;   // Step size at/above 1.0x
+        this.showingSettings = false;
+
         // Mouse state
         this.mouseDowned = null;
         this.isDragging = false;
@@ -72,7 +77,14 @@ class ScaleWidget {
         this.hitAreas = {
             slider: { x: 0, y: 0, width: 0, height: 0 },
             handle: { x: 0, y: 0, width: 0, height: 0 },
-            valueEdit: { x: 0, y: 0, width: 0, height: 0 }
+            valueEdit: { x: 0, y: 0, width: 0, height: 0 },
+            settingsIcon: { x: 0, y: 0, width: 0, height: 0 },
+            leftStepValue: { x: 0, y: 0, width: 0, height: 0 },
+            leftStepDown: { x: 0, y: 0, width: 0, height: 0 },
+            leftStepUp: { x: 0, y: 0, width: 0, height: 0 },
+            rightStepValue: { x: 0, y: 0, width: 0, height: 0 },
+            rightStepDown: { x: 0, y: 0, width: 0, height: 0 },
+            rightStepUp: { x: 0, y: 0, width: 0, height: 0 }
         };
     }
 
@@ -80,7 +92,7 @@ class ScaleWidget {
      * Get step size based on current value
      */
     getStepSize(value) {
-        return value < 1.0 ? 0.05 : 0.1;
+        return value < 1.0 ? this.leftStep : this.rightStep;
     }
 
     /**
@@ -307,6 +319,27 @@ class ScaleWidget {
             }
         }
 
+        // Draw settings gear icon at far right
+        const gearSize = 14;
+        const gearX = width - margin - gearSize - 4;
+        const gearY = y + height / 2 - gearSize / 2;
+
+        ctx.font = `${gearSize}px Arial`;
+        ctx.fillStyle = this.showingSettings ? "#4CAF50" : "#666";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("⚙", gearX + gearSize / 2, gearY + gearSize / 2);
+
+        this.hitAreas.settingsIcon = {
+            x: gearX, y: gearY,
+            width: gearSize, height: gearSize
+        };
+
+        // Draw settings panel if open
+        if (this.showingSettings) {
+            this.drawSettingsPanel(ctx, y + height, width);
+        }
+
         ctx.restore();
     }
 
@@ -384,6 +417,136 @@ class ScaleWidget {
     }
 
     /**
+     * Draw settings configuration panel
+     */
+    drawSettingsPanel(ctx, startY, width) {
+        const panelHeight = 65;
+        const margin = 15;
+        const padding = 6;
+
+        ctx.save();
+
+        // Panel background
+        ctx.fillStyle = "rgba(30, 30, 30, 0.95)";
+        ctx.beginPath();
+        ctx.roundRect(margin, startY, width - margin * 2, panelHeight, 4);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = "#4CAF50";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Title
+        ctx.fillStyle = "#4CAF50";
+        ctx.font = "bold 10px sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText("Scale Step Sizes", margin + padding, startY + padding);
+
+        // Button dimensions
+        const btnW = 18, btnH = 16;
+        const btnGap = 2;
+
+        // Calculate button positions from right edge
+        const rightEdge = width - margin - padding;
+        const plusX = rightEdge - btnW;
+        const minusX = plusX - btnGap - btnW;
+
+        // Left step control (row 1)
+        const row1Y = startY + 28;
+        ctx.fillStyle = "#fff";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("Below 1.0x:", margin + padding, row1Y);
+
+        // Value positioned to left of buttons (clickable)
+        const valueX = minusX - 6;
+        const valueWidth = 35;
+        const valueHeight = 16;
+        const leftValueX = valueX - valueWidth;
+        const leftValueY = row1Y - valueHeight / 2 + 3;
+
+        // Draw clickable background for left step value
+        ctx.fillStyle = "rgba(80, 80, 80, 0.3)";
+        ctx.beginPath();
+        ctx.roundRect(leftValueX, leftValueY, valueWidth, valueHeight, 2);
+        ctx.fill();
+
+        // Draw left step value (centered in box)
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        const leftBoxCenterY = leftValueY + valueHeight / 2;
+        ctx.fillText(this.leftStep.toFixed(3), valueX, leftBoxCenterY);
+
+        // Store hit area for left step value
+        this.hitAreas.leftStepValue = { x: leftValueX, y: leftValueY, width: valueWidth, height: valueHeight };
+
+        // +/- buttons for left step (right-aligned)
+        this.drawButton(ctx, minusX, row1Y - 4, btnW, btnH, "-");
+        this.hitAreas.leftStepDown = { x: minusX, y: row1Y - 4, width: btnW, height: btnH };
+
+        this.drawButton(ctx, plusX, row1Y - 4, btnW, btnH, "+");
+        this.hitAreas.leftStepUp = { x: plusX, y: row1Y - 4, width: btnW, height: btnH };
+
+        // Right step control (row 2)
+        const row2Y = startY + 48;
+
+        // Reset font/style after buttons (drawButton changes these)
+        ctx.fillStyle = "#fff";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText("At/above 1.0x:", margin + padding, row2Y);
+
+        // Value positioned to left of buttons (clickable)
+        const rightValueX = valueX - valueWidth;
+        const rightValueY = row2Y - valueHeight / 2 + 3;
+
+        // Draw clickable background for right step value
+        ctx.fillStyle = "rgba(80, 80, 80, 0.3)";
+        ctx.beginPath();
+        ctx.roundRect(rightValueX, rightValueY, valueWidth, valueHeight, 2);
+        ctx.fill();
+
+        // Draw right step value (centered in box)
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        const rightBoxCenterY = rightValueY + valueHeight / 2;
+        ctx.fillText(this.rightStep.toFixed(3), valueX, rightBoxCenterY);
+
+        // Store hit area for right step value
+        this.hitAreas.rightStepValue = { x: rightValueX, y: rightValueY, width: valueWidth, height: valueHeight };
+
+        // +/- buttons for right step (right-aligned)
+        this.drawButton(ctx, minusX, row2Y - 4, btnW, btnH, "-");
+        this.hitAreas.rightStepDown = { x: minusX, y: row2Y - 4, width: btnW, height: btnH };
+
+        this.drawButton(ctx, plusX, row2Y - 4, btnW, btnH, "+");
+        this.hitAreas.rightStepUp = { x: plusX, y: row2Y - 4, width: btnW, height: btnH };
+
+        ctx.restore();
+    }
+
+    /**
+     * Draw a button
+     */
+    drawButton(ctx, x, y, w, h, label) {
+        ctx.fillStyle = "#555";
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "12px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, x + w / 2, y + h / 2);
+    }
+
+    /**
      * Handle mouse events
      */
     mouse(event, pos, node) {
@@ -391,6 +554,67 @@ class ScaleWidget {
 
         if (event.type === "pointerdown") {
             this.mouseDowned = [...pos];
+
+            // Settings icon clicked - toggle panel
+            if (this.isInBounds(pos, this.hitAreas.settingsIcon)) {
+                this.showingSettings = !this.showingSettings;
+
+                // Preserve width, adjust height by panel size (65px)
+                const currentSize = node.size || [200, 24];
+                const heightDelta = this.showingSettings ? 65 : -65;
+                node.setSize([currentSize[0], currentSize[1] + heightDelta]);
+
+                node.setDirtyCanvas(true);
+                return true;
+            }
+
+            // Settings panel button clicks (when panel open)
+            if (this.showingSettings) {
+                if (this.isInBounds(pos, this.hitAreas.leftStepDown)) {
+                    this.leftStep = Math.max(0.001, this.leftStep - 0.01);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
+                if (this.isInBounds(pos, this.hitAreas.leftStepUp)) {
+                    this.leftStep = Math.min(1.0, this.leftStep + 0.01);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
+                if (this.isInBounds(pos, this.hitAreas.rightStepDown)) {
+                    this.rightStep = Math.max(0.001, this.rightStep - 0.01);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
+                if (this.isInBounds(pos, this.hitAreas.rightStepUp)) {
+                    this.rightStep = Math.min(10.0, this.rightStep + 0.01);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
+
+                // Check left step value edit click
+                if (this.isInBounds(pos, this.hitAreas.leftStepValue)) {
+                    canvas.prompt("Enter left step size (0.001 - 1.0)", String(this.leftStep.toFixed(3)), (newValue) => {
+                        const parsed = parseFloat(newValue);
+                        if (!isNaN(parsed) && parsed >= 0.001 && parsed <= 1.0) {
+                            this.leftStep = parsed;
+                            node.setDirtyCanvas(true);
+                        }
+                    }, event);
+                    return true;
+                }
+
+                // Check right step value edit click
+                if (this.isInBounds(pos, this.hitAreas.rightStepValue)) {
+                    canvas.prompt("Enter right step size (0.001 - 10.0)", String(this.rightStep.toFixed(3)), (newValue) => {
+                        const parsed = parseFloat(newValue);
+                        if (!isNaN(parsed) && parsed >= 0.001 && parsed <= 10.0) {
+                            this.rightStep = parsed;
+                            node.setDirtyCanvas(true);
+                        }
+                    }, event);
+                    return true;
+                }
+            }
 
             // Check value edit click
             if (this.isInBounds(pos, this.hitAreas.valueEdit)) {
@@ -508,15 +732,19 @@ class ScaleWidget {
      * Compute size for layout
      */
     computeSize(width) {
-        return [width, 24];
+        // Base height: 24px slider
+        // Settings panel: 65px when open
+        return [width, this.showingSettings ? 89 : 24];
     }
 
     /**
      * Serialize value for workflow JSON
+     * Returns ONLY the float value - this is what Python receives
+     * Step configuration is stored separately in node.serialize()
      */
     serializeValue(node, index) {
-        logger.debug(`serializeValue called: ${this.name} (index ${index}) = ${this.value}`);
-        return this.value;
+        logger.debug(`serializeValue called: ${this.name} (index ${index}) = ${this.value}, steps: ${this.leftStep}/${this.rightStep}`);
+        return this.value;  // Return float for Python, config stored elsewhere
     }
 }
 
@@ -701,14 +929,14 @@ class DimensionWidget {
             if (this.value.on) {
                 // Decrement button
                 if (this.isInBounds(pos, this.hitAreas.valueDec)) {
-                    this.changeValue(-1);
+                    this.changeValue(-1, node);
                     node.setDirtyCanvas(true);
                     return true;
                 }
 
                 // Increment button
                 if (this.isInBounds(pos, this.hitAreas.valueInc)) {
-                    this.changeValue(1);
+                    this.changeValue(1, node);
                     node.setDirtyCanvas(true);
                     return true;
                 }
@@ -744,10 +972,25 @@ class DimensionWidget {
     /**
      * Change value by increment
      */
-    changeValue(delta) {
+    changeValue(delta, node) {
         if (this.isInteger) {
-            // Integer: increment by 8 (divisibility-friendly)
-            this.value.value = Math.max(64, Math.round(this.value.value) + delta * 8);
+            // Get divisible_by setting from node
+            let increment = 8; // Default to 8 for divisibility-friendly increments
+            if (node && node.widgets) {
+                const divisibleWidget = node.widgets.find(w => w.name === "divisible_by");
+                if (divisibleWidget) {
+                    if (divisibleWidget.value === "Exact") {
+                        increment = 1;
+                    } else {
+                        const divisor = parseInt(divisibleWidget.value);
+                        if (!isNaN(divisor)) {
+                            increment = divisor;
+                        }
+                    }
+                }
+            }
+            // Integer: increment by divisible_by value
+            this.value.value = Math.max(64, Math.round(this.value.value) + delta * increment);
         } else {
             // Float: increment by 0.1
             this.value.value = Math.max(0.1, Math.round((this.value.value + delta * 0.1) * 10) / 10);
@@ -820,6 +1063,25 @@ app.registerExtension({
                 return r;
             };
 
+            // Store scale widget configuration in workflow (not sent to Python)
+            const onSerialize = nodeType.prototype.serialize;
+            nodeType.prototype.serialize = function() {
+                const data = onSerialize ? onSerialize.apply(this) : {};
+
+                // Store scale widget step configuration
+                const scaleWidget = this.widgets ? this.widgets.find(w => w instanceof ScaleWidget) : null;
+                if (scaleWidget) {
+                    if (!data.widgets_config) data.widgets_config = {};
+                    data.widgets_config.scale = {
+                        leftStep: scaleWidget.leftStep,
+                        rightStep: scaleWidget.rightStep
+                    };
+                    logger.debug('Serializing scale config:', data.widgets_config.scale);
+                }
+
+                return data;
+            };
+
             // Handle widget serialization for workflow save/load
             const onConfigure = nodeType.prototype.configure;
             nodeType.prototype.configure = function(info) {
@@ -846,7 +1108,7 @@ app.registerExtension({
                         }
                     }
 
-                    // Restore ScaleWidget (has simple number value)
+                    // Restore ScaleWidget value (just the number)
                     const scaleWidgets = this.widgets.filter(w => w instanceof ScaleWidget);
                     const scaleValues = info.widgets_values.filter(v => typeof v === 'number');
 
@@ -854,8 +1116,18 @@ app.registerExtension({
 
                     for (let i = 0; i < Math.min(scaleWidgets.length, scaleValues.length); i++) {
                         if (typeof scaleValues[i] === 'number') {
-                            logger.debug(`Restoring ${scaleWidgets[i].name}:`, scaleValues[i]);
+                            logger.debug(`Restoring ${scaleWidgets[i].name} value:`, scaleValues[i]);
                             scaleWidgets[i].value = scaleValues[i];
+                        }
+                    }
+
+                    // Restore ScaleWidget step configuration from widgets_config
+                    if (info.widgets_config && info.widgets_config.scale) {
+                        const scaleWidget = this.widgets.find(w => w instanceof ScaleWidget);
+                        if (scaleWidget) {
+                            scaleWidget.leftStep = info.widgets_config.scale.leftStep || 0.05;
+                            scaleWidget.rightStep = info.widgets_config.scale.rightStep || 0.1;
+                            logger.debug('Restored scale config:', info.widgets_config.scale);
                         }
                     }
                 }
