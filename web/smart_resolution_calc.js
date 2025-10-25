@@ -1134,6 +1134,38 @@ app.registerExtension({
 
                 logger.groupEnd();
             };
+
+            // Add visual indicator when image input is connected
+            const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+            nodeType.prototype.onConnectionsChange = function(type, index, connected, link_info) {
+                if (onConnectionsChange) {
+                    onConnectionsChange.apply(this, arguments);
+                }
+
+                // Check if this is the image input (find it dynamically)
+                if (type === LiteGraph.INPUT && this.inputs && this.inputs[index]) {
+                    const input = this.inputs[index];
+
+                    if (input.name === "image") {
+                        if (connected) {
+                            // Image connected - add subtle visual indicator
+                            this.bgcolor = "#1a2a3a";  // Slightly different background
+                            this.color = "#4a7a9a";    // Blueish tint
+                            logger.debug('Image input connected - visual indicator enabled');
+                        } else {
+                            // Image disconnected - restore default colors
+                            this.bgcolor = null;
+                            this.color = null;
+                            logger.debug('Image input disconnected - visual indicator removed');
+                        }
+
+                        // Trigger canvas redraw
+                        if (this.graph && this.graph.canvas) {
+                            this.graph.canvas.setDirty(true);
+                        }
+                    }
+                }
+            };
         }
     }
 });

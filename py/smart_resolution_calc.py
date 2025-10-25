@@ -82,6 +82,12 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
+                "image": ("IMAGE",),
+                "match_exact_dimensions": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "Exact Dims",
+                    "label_off": "AR Only"
+                }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
             # Widget data structure: {'on': bool, 'value': number}
@@ -119,7 +125,8 @@ class SmartResolutionCalc:
         return f"{w_ratio}:{h_ratio}"
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
-                            custom_aspect_ratio="16:9", batch_size=1, scale=1.0, **kwargs):
+                            custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
+                            image=None, match_exact_dimensions=False, **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -145,6 +152,32 @@ class SmartResolutionCalc:
         logger.debug(f"Function called with standard args: aspect_ratio={aspect_ratio}, divisible_by={divisible_by}, custom_ratio={custom_ratio}")
         logger.debug(f"kwargs keys received: {list(kwargs.keys())}")
         logger.debug(f"kwargs contents: {kwargs}")
+
+        # Image input handling - extract dimensions from connected image
+        mode_info = None
+        if image is not None:
+            # Extract dimensions from first image in batch
+            # Image tensor shape: [batch, height, width, channels]
+            h, w = image.shape[1], image.shape[2]
+            actual_ar = self.format_aspect_ratio(w, h)
+
+            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, match_exact_dimensions={match_exact_dimensions}")
+
+            if match_exact_dimensions:
+                # Force Width+Height mode with extracted dimensions
+                # Apply scale to extracted dimensions
+                kwargs['dimension_width'] = {'on': True, 'value': int(w * scale)}
+                kwargs['dimension_height'] = {'on': True, 'value': int(h * scale)}
+                mode_info = f"From Image (Exact: {w}×{h})"
+                if scale != 1.0:
+                    mode_info += f" @ {scale}x"
+                logger.debug(f"Match exact dimensions mode: forcing width={int(w * scale)}, height={int(h * scale)}")
+            else:
+                # Extract AR only, use with current megapixel calculation
+                custom_ratio = True
+                custom_aspect_ratio = actual_ar
+                mode_info = f"From Image (AR: {actual_ar})"
+                logger.debug(f"AR extraction mode: using AR {actual_ar} with existing megapixel logic")
 
         # Extract widget toggle states and values
         use_mp = kwargs.get('dimension_megapixel', {}).get('on', False)
@@ -267,6 +300,10 @@ class SmartResolutionCalc:
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
         info = f"Mode: {mode} | {info_detail} | Div: {div_info}"
+
+        # Prepend image source info if applicable
+        if mode_info:
+            info = f"{mode_info} | {info}"
 
         # ALWAYS log final results
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")
