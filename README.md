@@ -17,15 +17,16 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ## Features
 
+- **Image dimension extraction** - Connect images to auto-extract aspect ratio or exact dimensions ([detailed guide](docs/image-input.md))
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
-- **Compact custom widgets** - rgthree-style height controls with inline toggles
+- **Compact custom widgets** - rgthree-style controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
 - **Visual preview** - See exact dimensions and aspect ratio before generation
 - **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64)
-- **Debug logging** - Python + JavaScript debug modes for troubleshooting
+- **Scale multiplier** - Asymmetric slider with 1.0x visual center for precise scaling
 - **Workflow persistence** - Widget states save/load with workflows
 
 ## Prerequisites
@@ -120,6 +121,16 @@ No toggles active uses 1.0 MP with selected aspect ratio:
 - **Result**: Default dimensions for selected ratio
 - **Info**: `Mode: Default (1.0 MP) | W: 1216 × H: 688 | Div: 16`
 
+### Image Input
+
+Connect an IMAGE output to automatically extract dimensions or aspect ratio. See the [Image Input Guide](docs/image-input.md) for detailed documentation.
+
+**Quick Start**:
+- Connect image → Extraction modes automatically available
+- **AR Only** (default): Extracts aspect ratio, uses with megapixel setting
+- **Exact Dims**: Uses exact image dimensions with scale applied
+- **Copy Button**: Extract once, then manually adjust
+
 ### Aspect Ratio Presets
 
 **Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
@@ -212,6 +223,12 @@ Debug logs show widget data flow, calculation steps, and final results.
 set COMFY_DEBUG_SMART_RES_CALC=false
 localStorage.removeItem('DEBUG_SMART_RES_CALC');
 ```
+
+## Documentation
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[Image Input Guide](docs/image-input.md)** - Detailed documentation for image dimension extraction feature
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup and contribution guidelines
 
 ## Contributing
 

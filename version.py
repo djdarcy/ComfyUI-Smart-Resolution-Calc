@@ -21,13 +21,13 @@ PATCH = 0
 
 # Optional release phase (alpha, beta, rc1, rc2, etc.)
 # Set to None for stable releases
-PHASE = "alpha"  # Options: None, "alpha", "beta", "rc1", "rc2", etc.
+PHASE = "alpha1"  # Options: None, "alpha", "beta", "rc1", "rc2", etc.
 
 # Full version string - updated by git pre-commit hook
 # DO NOT EDIT THIS LINE MANUALLY
 # Note: Hash reflects the commit this version builds upon (HEAD at commit time)
 # The hash will be one commit behind after the commit is created (git limitation)
-__version__ = "0.2.0-alpha_dev_24-20251025-0231237"
+__version__ = "0.2.0-alpha1_dev_25-20251025-689c6b8"
 
 
 def get_version():

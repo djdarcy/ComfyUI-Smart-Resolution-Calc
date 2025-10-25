@@ -82,11 +82,18 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
+                "enable_image_input": ("BOOLEAN", {
+                    "default": True,
+                    "label_on": "Enabled",
+                    "label_off": "Disabled",
+                    "tooltip": "Enable/disable image dimension extraction without disconnecting the image input"
+                }),
                 "image": ("IMAGE",),
-                "match_exact_dimensions": ("BOOLEAN", {
+                "use_image_dimensions": ("BOOLEAN", {
                     "default": False,
                     "label_on": "Exact Dims",
-                    "label_off": "AR Only"
+                    "label_off": "AR Only",
+                    "tooltip": "AR Only: Extract aspect ratio and use with megapixel calculation | Exact Dims: Use exact image dimensions (with scale applied)"
                 }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
@@ -126,7 +133,7 @@ class SmartResolutionCalc:
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
-                            image=None, match_exact_dimensions=False, **kwargs):
+                            enable_image_input=True, image=None, use_image_dimensions=False, **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -155,15 +162,23 @@ class SmartResolutionCalc:
 
         # Image input handling - extract dimensions from connected image
         mode_info = None
-        if image is not None:
+        override_warning = False
+        if image is not None and enable_image_input:
             # Extract dimensions from first image in batch
             # Image tensor shape: [batch, height, width, channels]
             h, w = image.shape[1], image.shape[2]
             actual_ar = self.format_aspect_ratio(w, h)
 
-            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, match_exact_dimensions={match_exact_dimensions}")
+            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, use_image_dimensions={use_image_dimensions}")
 
-            if match_exact_dimensions:
+            if use_image_dimensions:
+                # Check if manual WIDTH or HEIGHT settings will be overridden
+                manual_width = kwargs.get('dimension_width', {}).get('on', False)
+                manual_height = kwargs.get('dimension_height', {}).get('on', False)
+                if manual_width or manual_height:
+                    override_warning = True
+                    logger.debug(f"Override warning: Manual W/H settings detected but will be ignored in exact dims mode")
+
                 # Force Width+Height mode with extracted dimensions
                 # Apply scale to extracted dimensions
                 kwargs['dimension_width'] = {'on': True, 'value': int(w * scale)}
@@ -171,7 +186,7 @@ class SmartResolutionCalc:
                 mode_info = f"From Image (Exact: {w}×{h})"
                 if scale != 1.0:
                     mode_info += f" @ {scale}x"
-                logger.debug(f"Match exact dimensions mode: forcing width={int(w * scale)}, height={int(h * scale)}")
+                logger.debug(f"Exact dimensions mode: forcing width={int(w * scale)}, height={int(h * scale)}")
             else:
                 # Extract AR only, use with current megapixel calculation
                 custom_ratio = True
@@ -304,6 +319,9 @@ class SmartResolutionCalc:
         # Prepend image source info if applicable
         if mode_info:
             info = f"{mode_info} | {info}"
+            # Add override warning if exact dims mode overrides manual settings
+            if override_warning:
+                info = f"⚠️ [Manual W/H Ignored] | {info}"
 
         # ALWAYS log final results
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")

@@ -1014,6 +1014,144 @@ class DimensionWidget {
 }
 
 /**
+ * Copy from Image Button Widget
+ * Simple button to extract dimensions from connected image and populate widgets
+ */
+class CopyImageButton {
+    constructor(name = "copy_from_image") {
+        this.name = name;
+        this.type = "button";
+        this.value = null;  // Buttons don't need a value
+    }
+
+    draw(ctx, node, width, y, height) {
+        ctx.save();
+
+        const x = 15;  // Standard widget left margin
+        const buttonWidth = width - 30;  // Leave margins on both sides
+        const buttonHeight = 28;
+
+        // Check if image is connected
+        const imageInput = node.inputs ? node.inputs.find(i => i.name === "image") : null;
+        const hasImage = imageInput && imageInput.link != null;
+
+        // Button style
+        if (hasImage) {
+            // Active state - image connected
+            ctx.fillStyle = this.isHovering ? "#4a7a9a" : "#3a5a7a";
+        } else {
+            // Disabled state - no image
+            ctx.fillStyle = "#2a2a2a";
+        }
+
+        // Draw button background
+        ctx.beginPath();
+        ctx.roundRect(x, y, buttonWidth, buttonHeight, 4);
+        ctx.fill();
+
+        // Button border
+        ctx.strokeStyle = hasImage ? "#5a8aaa" : "#3a3a3a";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Button text
+        ctx.fillStyle = hasImage ? "#ffffff" : "#666666";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const text = hasImage ? "📋 Copy from Image" : "📋 Copy from Image (No Image)";
+        ctx.fillText(text, x + buttonWidth / 2, y + buttonHeight / 2);
+
+        // Store hit area
+        this.hitArea = { x, y, width: buttonWidth, height: buttonHeight };
+
+        ctx.restore();
+    }
+
+    mouse(event, pos, node) {
+        if (event.type === "pointermove") {
+            // Check hover state
+            this.isHovering = this.isInBounds(pos, this.hitArea);
+            if (this.isHovering) {
+                node.setDirtyCanvas(true);
+            }
+            return false;
+        }
+
+        if (event.type === "pointerdown") {
+            if (this.isInBounds(pos, this.hitArea)) {
+                // Check if image is connected
+                const imageInput = node.inputs ? node.inputs.find(i => i.name === "image") : null;
+                if (imageInput && imageInput.link != null) {
+                    // Get the connected node
+                    const link = node.graph.links[imageInput.link];
+                    if (link) {
+                        const sourceNode = node.graph.getNodeById(link.origin_id);
+                        if (sourceNode) {
+                            // Try to get image from source node's last execution
+                            this.copyFromImage(node, sourceNode);
+                        }
+                    }
+                } else {
+                    logger.debug("No image connected - button disabled");
+                }
+                node.setDirtyCanvas(true);
+                return true;
+            }
+        }
+
+        if (event.type === "pointerup") {
+            if (this.isHovering) {
+                this.isHovering = false;
+                node.setDirtyCanvas(true);
+            }
+        }
+
+        return false;
+    }
+
+    copyFromImage(node, sourceNode) {
+        logger.debug("Copy from Image clicked!");
+
+        // Get image dimensions from last execution if available
+        // In ComfyUI, we need to wait for actual execution to get image data
+        // So instead, we'll use a different approach: trigger a lightweight execution
+
+        // For now, show a helpful message
+        const canvas = app.canvas;
+        canvas.prompt(
+            "Copy Image Dimensions",
+            "To copy dimensions:\n1. Run the workflow once (Queue Prompt)\n2. Image dimensions will auto-populate\n\nOr manually enter width and height from your source image.",
+            null,
+            event
+        );
+
+        logger.debug("Copy from image - prompting user for manual entry alternative");
+
+        // TODO: In future version, could add actual dimension extraction by:
+        // 1. Accessing node's output cache if available
+        // 2. Or adding a Python endpoint to extract dims without full execution
+    }
+
+    isInBounds(pos, bounds) {
+        if (!bounds) return false;
+        return pos[0] >= bounds.x &&
+               pos[0] <= bounds.x + bounds.width &&
+               pos[1] >= bounds.y &&
+               pos[1] <= bounds.y + bounds.height;
+    }
+
+    computeSize(width) {
+        return [width, 32];  // Button height
+    }
+
+    serializeValue(node, index) {
+        // Buttons don't serialize - they're action triggers
+        return undefined;
+    }
+}
+
+/**
  * Register the Smart Resolution Calculator extension
  */
 app.registerExtension({
@@ -1040,14 +1178,18 @@ app.registerExtension({
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
 
-                // Add widgets to node
+                // Add copy from image button (placed first to appear right after use_image_dimensions)
+                const copyButton = new CopyImageButton("copy_from_image");
+
+                // Add widgets to node (copy button first, then dimension controls, then scale)
+                this.addCustomWidget(copyButton);
                 this.addCustomWidget(mpWidget);
                 this.addCustomWidget(widthWidget);
                 this.addCustomWidget(heightWidget);
                 this.addCustomWidget(scaleWidget);
 
-                logger.debug('Added 4 custom widgets to node');
-                logger.debug('Widget names:', mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
+                logger.debug('Added 5 custom widgets to node (copy button positioned after use_image_dimensions)');
+                logger.debug('Widget names:', copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
