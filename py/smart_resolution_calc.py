@@ -82,23 +82,12 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
-                "enable_image_input": ("BOOLEAN", {
-                    "default": True,
-                    "label_on": "Enabled",
-                    "label_off": "Disabled",
-                    "tooltip": "Enable/disable image dimension extraction without disconnecting the image input"
-                }),
                 "image": ("IMAGE",),
-                "use_image_dimensions": ("BOOLEAN", {
-                    "default": False,
-                    "label_on": "Exact Dims",
-                    "label_off": "AR Only",
-                    "tooltip": "AR Only: Extract aspect ratio and use with megapixel calculation | Exact Dims: Use exact image dimensions (with scale applied)"
-                }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
             # Widget data structure: {'on': bool, 'value': number}
             "hidden": {
+                "image_mode": "IMAGE_MODE_WIDGET",  # {on: bool, value: 0|1} - 0=AR Only, 1=Exact Dims
                 "dimension_megapixel": "DIMENSION_WIDGET",
                 "dimension_width": "DIMENSION_WIDGET",
                 "dimension_height": "DIMENSION_WIDGET",
@@ -133,7 +122,7 @@ class SmartResolutionCalc:
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
-                            enable_image_input=True, image=None, use_image_dimensions=False, **kwargs):
+                            image=None, **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -161,17 +150,22 @@ class SmartResolutionCalc:
         logger.debug(f"kwargs contents: {kwargs}")
 
         # Image input handling - extract dimensions from connected image
+        # image_mode widget: {on: bool, value: 0|1} - 0=AR Only, 1=Exact Dims
         mode_info = None
         override_warning = False
-        if image is not None and enable_image_input:
+        image_mode = kwargs.get('image_mode', {'on': True, 'value': 0})  # Default: enabled, AR Only
+        use_image = image_mode.get('on', True) if isinstance(image_mode, dict) else True
+        exact_dims = image_mode.get('value', 0) == 1 if isinstance(image_mode, dict) else False
+
+        if image is not None and use_image:
             # Extract dimensions from first image in batch
             # Image tensor shape: [batch, height, width, channels]
             h, w = image.shape[1], image.shape[2]
             actual_ar = self.format_aspect_ratio(w, h)
 
-            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, use_image_dimensions={use_image_dimensions}")
+            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, mode={image_mode}")
 
-            if use_image_dimensions:
+            if exact_dims:
                 # Check if manual WIDTH or HEIGHT settings will be overridden
                 manual_width = kwargs.get('dimension_width', {}).get('on', False)
                 manual_height = kwargs.get('dimension_height', {}).get('on', False)

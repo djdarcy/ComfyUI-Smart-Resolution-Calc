@@ -8,8 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased - 0.2.0-beta]
 
 ### Planned
-- Refactor image input to single custom widget ("USE IMAGE?" with toggle + mode selector)
-- Consolidate `enable_image_input` + `use_image_dimensions` into unified pattern
+- Hybrid B+C copy button implementation (server endpoint + info parsing)
+- Info icon tooltip system for advanced features
+
+## [0.2.0-alpha2] - 2025-10-25
+
+### Changed (from alpha1)
+- **ImageModeWidget Styling Fixes**: Added "USE IMAGE?" label, fixed toggle colors
+- **Label Display**: Widget now shows "[Toggle] USE IMAGE? [AR Only/Exact Dims]" layout
+- **Toggle Color**: Matches dimension widgets (green #4CAF50 when ON, gray #888888 when OFF)
+- **Mode Selector**: Fixed width (100px), proper alignment on right side
+
+### Technical
+- Updated `ImageModeWidget.draw()` to include label text
+- Updated `ImageModeWidget.drawToggle()` to match DimensionWidget style exactly
+- Fixed mode selector positioning and hit area detection
+
+### Known Issues
+- Copy button still shows placeholder instructions (will fix in alpha3)
+- Requires hybrid B+C implementation for immediate copying
 
 ## [0.2.0-alpha1] - 2025-10-25
 

@@ -1014,6 +1014,174 @@ class DimensionWidget {
 }
 
 /**
+ * Image Mode Widget
+ * Compact widget with toggle (LEFT) and mode selector (RIGHT)
+ * Answers the question "USE IMAGE?" with ON/OFF + AR Only/Exact Dims
+ */
+class ImageModeWidget {
+    constructor(name = "image_mode") {
+        this.name = name;
+        this.type = "custom";
+        this.value = {
+            on: true,   // Default: enabled
+            value: 0    // 0 = AR Only, 1 = Exact Dims
+        };
+
+        // Mode labels
+        this.modes = ["AR Only", "Exact Dims"];
+
+        // Mouse state
+        this.mouseDowned = null;
+        this.isMouseDownedAndOver = false;
+
+        // Hit areas
+        this.hitAreas = {
+            toggle: { x: 0, y: 0, width: 0, height: 0 },
+            modeSelector: { x: 0, y: 0, width: 0, height: 0 }
+        };
+    }
+
+    /**
+     * Draw compact widget matching DimensionWidget style
+     * Layout: [Toggle] USE IMAGE? [AR Only/Exact Dims]
+     */
+    draw(ctx, node, width, y, height) {
+        const margin = 15;
+        const innerMargin = 3;
+        const midY = y + height / 2;
+
+        ctx.save();
+
+        // Background
+        ctx.fillStyle = "#1e1e1e";
+        ctx.beginPath();
+        ctx.roundRect(margin, y + 1, width - margin * 2, height - 2, 4);
+        ctx.fill();
+
+        let posX = margin + innerMargin;
+
+        // Draw toggle switch (LEFT) - matching DimensionWidget style
+        const toggleWidth = height * 1.5;
+        this.drawToggle(ctx, posX, y, height, this.value.on);
+        this.hitAreas.toggle = { x: posX, y, width: toggleWidth, height };
+        posX += toggleWidth + innerMargin * 2;
+
+        // Draw label (MIDDLE) - "USE IMAGE?"
+        ctx.fillStyle = this.value.on ? "#ffffff" : "#888888";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.font = "13px sans-serif";
+        ctx.fillText("USE IMAGE?", posX, midY);
+
+        // Calculate mode selector position (RIGHT side)
+        const modeWidth = 100;  // Fixed width for mode selector
+        const modeX = width - margin - modeWidth - innerMargin;
+
+        // Draw mode selector (RIGHT)
+        const modeText = this.modes[this.value.value];
+
+        // Mode background (subtle highlight if enabled)
+        if (this.value.on) {
+            ctx.fillStyle = "#2a2a2a";
+            ctx.beginPath();
+            ctx.roundRect(modeX, y + 2, modeWidth, height - 4, 3);
+            ctx.fill();
+        }
+
+        // Mode text
+        ctx.fillStyle = this.value.on ? "#ffffff" : "#666666";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(modeText, modeX + modeWidth / 2, midY);
+
+        this.hitAreas.modeSelector = { x: modeX, y, width: modeWidth, height };
+
+        ctx.restore();
+    }
+
+    /**
+     * Draw toggle switch (matching DimensionWidget style exactly)
+     */
+    drawToggle(ctx, x, y, height, state) {
+        const radius = height * 0.36;
+        const bgWidth = height * 1.5;
+
+        ctx.save();
+
+        // Toggle track background
+        ctx.beginPath();
+        ctx.roundRect(x + 4, y + 4, bgWidth - 8, height - 8, height * 0.5);
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = "rgba(255,255,255,0.45)";
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        // Toggle circle (green when ON, gray when OFF - matching DimensionWidget)
+        const circleX = state ? x + height : x + height * 0.5;
+        ctx.beginPath();
+        ctx.arc(circleX, y + height * 0.5, radius, 0, Math.PI * 2);
+        ctx.fillStyle = state ? "#4CAF50" : "#888888";  // Green when ON, gray when OFF
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    /**
+     * Handle mouse events
+     */
+    mouse(event, pos, node) {
+        if (event.type === "pointerdown") {
+            this.mouseDowned = [...pos];
+            this.isMouseDownedAndOver = true;
+
+            // Toggle click
+            if (this.isInBounds(pos, this.hitAreas.toggle)) {
+                const oldState = this.value.on;
+                this.value.on = !this.value.on;
+                logger.debug(`Image mode toggle: ${oldState} → ${this.value.on}`);
+                node.setDirtyCanvas(true);
+                return true;
+            }
+
+            // Mode selector click (only if enabled)
+            if (this.value.on && this.isInBounds(pos, this.hitAreas.modeSelector)) {
+                this.value.value = this.value.value === 0 ? 1 : 0;
+                logger.debug(`Image mode changed to: ${this.modes[this.value.value]}`);
+                node.setDirtyCanvas(true);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if position is within bounds
+     */
+    isInBounds(pos, bounds) {
+        return pos[0] >= bounds.x &&
+               pos[0] <= bounds.x + bounds.width &&
+               pos[1] >= bounds.y &&
+               pos[1] <= bounds.y + bounds.height;
+    }
+
+    /**
+     * Compute size for layout
+     */
+    computeSize(width) {
+        return [width, 24];  // Compact height matching DimensionWidget
+    }
+
+    /**
+     * Serialize value for workflow JSON
+     */
+    serializeValue(node, index) {
+        logger.debug(`serializeValue called: ${this.name} (index ${index}) =`, this.value);
+        return this.value;
+    }
+}
+
+/**
  * Copy from Image Button Widget
  * Simple button to extract dimensions from connected image and populate widgets
  */
@@ -1170,6 +1338,12 @@ app.registerExtension({
                 this.serialize_widgets = true;
                 logger.debug('serialize_widgets set to:', this.serialize_widgets);
 
+                // Add image mode widget (USE IMAGE? toggle + AR Only/Exact Dims selector)
+                const imageModeWidget = new ImageModeWidget("image_mode");
+
+                // Add copy from image button
+                const copyButton = new CopyImageButton("copy_from_image");
+
                 // Add compact dimension widgets
                 const mpWidget = new DimensionWidget("dimension_megapixel", 1.0, false);
                 const widthWidget = new DimensionWidget("dimension_width", 1920, true);
@@ -1178,18 +1352,16 @@ app.registerExtension({
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
 
-                // Add copy from image button (placed first to appear right after use_image_dimensions)
-                const copyButton = new CopyImageButton("copy_from_image");
-
-                // Add widgets to node (copy button first, then dimension controls, then scale)
+                // Add widgets to node (image mode first, then copy button, then dimension controls, then scale)
+                this.addCustomWidget(imageModeWidget);
                 this.addCustomWidget(copyButton);
                 this.addCustomWidget(mpWidget);
                 this.addCustomWidget(widthWidget);
                 this.addCustomWidget(heightWidget);
                 this.addCustomWidget(scaleWidget);
 
-                logger.debug('Added 5 custom widgets to node (copy button positioned after use_image_dimensions)');
-                logger.debug('Widget names:', copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
+                logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
+                logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
@@ -1237,9 +1409,20 @@ app.registerExtension({
 
                 // Restore widget values from saved workflow
                 if (info.widgets_values) {
+                    // Restore ImageModeWidget (has {on, value} structure)
+                    const imageModeWidgets = this.widgets.filter(w => w instanceof ImageModeWidget);
+                    const imageModeValues = info.widgets_values.filter(v => v && typeof v === 'object' && 'on' in v && 'value' in v && typeof v.value === 'number' && v.value <= 1);
+
+                    logger.debug('Found', imageModeWidgets.length, 'ImageModeWidgets and', imageModeValues.length, 'image mode values');
+
+                    if (imageModeWidgets.length > 0 && imageModeValues.length > 0) {
+                        logger.debug(`Restoring ${imageModeWidgets[0].name}:`, imageModeValues[0]);
+                        imageModeWidgets[0].value = { ...imageModeValues[0] };
+                    }
+
                     // Restore DimensionWidgets (have {on, value} structure)
                     const dimWidgets = this.widgets.filter(w => w instanceof DimensionWidget);
-                    const dimValues = info.widgets_values.filter(v => v && typeof v === 'object' && 'on' in v);
+                    const dimValues = info.widgets_values.filter(v => v && typeof v === 'object' && 'on' in v && 'value' in v && typeof v.value === 'number' && v.value > 1);
 
                     logger.debug('Found', dimWidgets.length, 'DimensionWidgets and', dimValues.length, 'dimension values');
 
