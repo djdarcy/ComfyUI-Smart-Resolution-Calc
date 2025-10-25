@@ -8,34 +8,65 @@ import { app } from "../../scripts/app.js";
  */
 
 /**
- * Debug Logger - toggleable via localStorage
- * Enable with: localStorage.setItem('DEBUG_SMART_RES_CALC', 'true')
- * Disable with: localStorage.removeItem('DEBUG_SMART_RES_CALC')
+ * Debug Logger - Multi-level logging
+ *
+ * Levels (from most to least verbose):
+ * - VERBOSE: Detailed internal state (mouse events, hit areas, every step)
+ * - DEBUG: Standard debugging (user actions, state changes)
+ * - INFO: Important events (always shown when debug enabled)
+ *
+ * Enable debug: localStorage.setItem('DEBUG_SMART_RES_CALC', 'true')
+ * Enable verbose: localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true')
+ * Disable: localStorage.removeItem('DEBUG_SMART_RES_CALC')
  */
 class DebugLogger {
     constructor(name) {
         this.name = name;
-        // Check localStorage OR URL parameter for debug mode
-        this.enabled = localStorage.getItem('DEBUG_SMART_RES_CALC') === 'true' ||
-                      window.location.search.includes('debug=smart-res');
+        // Check localStorage OR URL parameter for debug/verbose mode
+        this.debugEnabled = localStorage.getItem('DEBUG_SMART_RES_CALC') === 'true' ||
+                           window.location.search.includes('debug=smart-res');
+        this.verboseEnabled = localStorage.getItem('VERBOSE_SMART_RES_CALC') === 'true' ||
+                             window.location.search.includes('verbose=smart-res');
 
-        if (this.enabled) {
+        if (this.verboseEnabled) {
+            console.log(`[${this.name}] Verbose mode enabled (includes all debug messages)`);
+        } else if (this.debugEnabled) {
             console.log(`[${this.name}] Debug mode enabled`);
         }
     }
 
+    // VERBOSE: Detailed internal state (mouse coords, hit areas, serialization)
+    verbose(...args) {
+        if (this.verboseEnabled) {
+            console.log(`[${this.name}] VERBOSE:`, ...args);
+        }
+    }
+
+    // DEBUG: Standard debugging (user actions, state changes)
     debug(...args) {
-        if (this.enabled) {
+        if (this.debugEnabled || this.verboseEnabled) {
             console.log(`[${this.name}]`, ...args);
         }
     }
 
+    // INFO: Important events (always shown when debug enabled)
+    info(...args) {
+        if (this.debugEnabled || this.verboseEnabled) {
+            console.log(`[${this.name}]`, ...args);
+        }
+    }
+
+    // ERROR: Always shown
+    error(...args) {
+        console.error(`[${this.name}] ERROR:`, ...args);
+    }
+
     group(label) {
-        if (this.enabled) console.group(`[${this.name}] ${label}`);
+        if (this.debugEnabled || this.verboseEnabled) console.group(`[${this.name}] ${label}`);
     }
 
     groupEnd() {
-        if (this.enabled) console.groupEnd();
+        if (this.debugEnabled || this.verboseEnabled) console.groupEnd();
     }
 }
 
@@ -1030,6 +1061,10 @@ class ImageModeWidget {
         // Mode labels
         this.modes = ["AR Only", "Exact Dims"];
 
+        // Track image connection state (set by onConnectionsChange)
+        // NOTE: Don't use 'disabled' - LiteGraph checks it and blocks mouse() calls
+        this.imageDisconnected = false;  // False = image connected, True = no image
+
         // Mouse state
         this.mouseDowned = null;
         this.isMouseDownedAndOver = false;
@@ -1044,6 +1079,7 @@ class ImageModeWidget {
     /**
      * Draw compact widget matching DimensionWidget style
      * Layout: [Toggle] USE IMAGE? [AR Only/Exact Dims]
+     * Note: Visual appearance unchanged when disabled, only blocks clicks
      */
     draw(ctx, node, width, y, height) {
         const margin = 15;
@@ -1052,7 +1088,7 @@ class ImageModeWidget {
 
         ctx.save();
 
-        // Background
+        // Background (normal appearance always)
         ctx.fillStyle = "#1e1e1e";
         ctx.beginPath();
         ctx.roundRect(margin, y + 1, width - margin * 2, height - 2, 4);
@@ -1063,7 +1099,11 @@ class ImageModeWidget {
         // Draw toggle switch (LEFT) - matching DimensionWidget style
         const toggleWidth = height * 1.5;
         this.drawToggle(ctx, posX, y, height, this.value.on);
+
+        // Always set toggle hit area - mouse() handles asymmetric logic
+        // (allows turning OFF when disabled, blocks turning ON)
         this.hitAreas.toggle = { x: posX, y, width: toggleWidth, height };
+
         posX += toggleWidth + innerMargin * 2;
 
         // Draw label (MIDDLE) - "USE IMAGE?"
@@ -1094,7 +1134,13 @@ class ImageModeWidget {
         ctx.textAlign = "center";
         ctx.fillText(modeText, modeX + modeWidth / 2, midY);
 
-        this.hitAreas.modeSelector = { x: modeX, y, width: modeWidth, height };
+        // Only set mode selector hit area when image connected
+        // (mouse() method will still block it, but this prevents visual feedback)
+        if (!this.imageDisconnected) {
+            this.hitAreas.modeSelector = { x: modeX, y, width: modeWidth, height };
+        } else {
+            this.hitAreas.modeSelector = { x: 0, y: 0, width: 0, height: 0 };
+        }
 
         ctx.restore();
     }
@@ -1116,7 +1162,7 @@ class ImageModeWidget {
         ctx.fill();
         ctx.globalAlpha = 1.0;
 
-        // Toggle circle (green when ON, gray when OFF - matching DimensionWidget)
+        // Toggle circle (green when ON, gray when OFF)
         const circleX = state ? x + height : x + height * 0.5;
         ctx.beginPath();
         ctx.arc(circleX, y + height * 0.5, radius, 0, Math.PI * 2);
@@ -1128,23 +1174,45 @@ class ImageModeWidget {
 
     /**
      * Handle mouse events
+     * Asymmetric logic when no image connected:
+     * - Allow turning OFF (user wants to disable USE_IMAGE)
+     * - Block turning ON (doesn't make sense without image)
+     * - Block mode selector entirely
      */
     mouse(event, pos, node) {
         if (event.type === "pointerdown") {
+            logger.debug(`ImageModeWidget.mouse() - imageDisconnected: ${this.imageDisconnected}, value.on: ${this.value.on}, pos: [${pos[0]}, ${pos[1]}]`);
+            logger.debug('Toggle hit area:', this.hitAreas.toggle);
+
             this.mouseDowned = [...pos];
             this.isMouseDownedAndOver = true;
 
             // Toggle click
-            if (this.isInBounds(pos, this.hitAreas.toggle)) {
+            const inToggleBounds = this.isInBounds(pos, this.hitAreas.toggle);
+            logger.debug(`Toggle bounds check: ${inToggleBounds}`);
+
+            if (inToggleBounds) {
                 const oldState = this.value.on;
-                this.value.on = !this.value.on;
-                logger.debug(`Image mode toggle: ${oldState} → ${this.value.on}`);
+                const newState = !this.value.on;
+
+                logger.debug(`Toggle clicked: ${oldState} → ${newState}, imageDisconnected: ${this.imageDisconnected}`);
+
+                // Asymmetric logic when image disconnected:
+                // - Allow ON → OFF (user turning it off is fine)
+                // - Block OFF → ON (can't enable without image)
+                if (this.imageDisconnected && newState === true) {
+                    logger.debug('Image mode toggle blocked: Cannot enable USE_IMAGE without image connected');
+                    return false;
+                }
+
+                this.value.on = newState;
+                logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
                 node.setDirtyCanvas(true);
                 return true;
             }
 
-            // Mode selector click (only if enabled)
-            if (this.value.on && this.isInBounds(pos, this.hitAreas.modeSelector)) {
+            // Mode selector click (only if enabled AND image connected)
+            if (this.value.on && !this.imageDisconnected && this.isInBounds(pos, this.hitAreas.modeSelector)) {
                 this.value.value = this.value.value === 0 ? 1 : 0;
                 logger.debug(`Image mode changed to: ${this.modes[this.value.value]}`);
                 node.setDirtyCanvas(true);
@@ -1188,69 +1256,127 @@ class ImageModeWidget {
 class CopyImageButton {
     constructor(name = "copy_from_image") {
         this.name = name;
-        this.type = "button";
+        this.type = "custom";  // Must be "custom" for addCustomWidget to route mouse events
         this.value = null;  // Buttons don't need a value
+
+        // Undo state
+        this.undoStack = null;  // Stores previous values: {width: {on, value}, height: {on, value}}
+        this.showUndo = false;  // Show undo button after copy
+
+        // Hover states
+        this.isHoveringCopy = false;
+        this.isHoveringUndo = false;
     }
 
     draw(ctx, node, width, y, height) {
         ctx.save();
 
         const x = 15;  // Standard widget left margin
-        const buttonWidth = width - 30;  // Leave margins on both sides
+        const margin = 3;  // Space between buttons
         const buttonHeight = 28;
 
         // Check if image is connected
         const imageInput = node.inputs ? node.inputs.find(i => i.name === "image") : null;
         const hasImage = imageInput && imageInput.link != null;
 
-        // Button style
+        // Layout: [Copy Button] [Undo Button] if showUndo
+        const undoButtonWidth = this.showUndo ? 60 : 0;
+        const copyButtonWidth = this.showUndo
+            ? width - 30 - undoButtonWidth - margin  // Leave space for undo
+            : width - 30;  // Full width
+
+        // === Draw Copy Button ===
+
+        // Copy button style
         if (hasImage) {
-            // Active state - image connected
-            ctx.fillStyle = this.isHovering ? "#4a7a9a" : "#3a5a7a";
+            ctx.fillStyle = this.isHoveringCopy ? "#4a7a9a" : "#3a5a7a";
         } else {
-            // Disabled state - no image
             ctx.fillStyle = "#2a2a2a";
         }
 
-        // Draw button background
+        // Copy button background
         ctx.beginPath();
-        ctx.roundRect(x, y, buttonWidth, buttonHeight, 4);
+        ctx.roundRect(x, y, copyButtonWidth, buttonHeight, 4);
         ctx.fill();
 
-        // Button border
+        // Copy button border
         ctx.strokeStyle = hasImage ? "#5a8aaa" : "#3a3a3a";
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Button text
+        // Copy button text
         ctx.fillStyle = hasImage ? "#ffffff" : "#666666";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         const text = hasImage ? "📋 Copy from Image" : "📋 Copy from Image (No Image)";
-        ctx.fillText(text, x + buttonWidth / 2, y + buttonHeight / 2);
+        ctx.fillText(text, x + copyButtonWidth / 2, y + buttonHeight / 2);
 
-        // Store hit area
-        this.hitArea = { x, y, width: buttonWidth, height: buttonHeight };
+        // Store copy button hit area
+        this.hitAreaCopy = { x, y, width: copyButtonWidth, height: buttonHeight };
+
+        // === Draw Undo Button (if available) ===
+
+        if (this.showUndo) {
+            const undoX = x + copyButtonWidth + margin;
+
+            // Undo button style
+            ctx.fillStyle = this.isHoveringUndo ? "#9a4a4a" : "#7a3a3a";
+
+            // Undo button background
+            ctx.beginPath();
+            ctx.roundRect(undoX, y, undoButtonWidth, buttonHeight, 4);
+            ctx.fill();
+
+            // Undo button border
+            ctx.strokeStyle = "#aa5a5a";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Undo button text
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("↶ Undo", undoX + undoButtonWidth / 2, y + buttonHeight / 2);
+
+            // Store undo button hit area
+            this.hitAreaUndo = { x: undoX, y, width: undoButtonWidth, height: buttonHeight };
+        } else {
+            this.hitAreaUndo = null;
+        }
 
         ctx.restore();
     }
 
     mouse(event, pos, node) {
+        logger.verbose(`CopyImageButton.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
+
         if (event.type === "pointermove") {
-            // Check hover state
-            this.isHovering = this.isInBounds(pos, this.hitArea);
-            if (this.isHovering) {
+            // Check hover state for both buttons
+            const wasHoveringCopy = this.isHoveringCopy;
+            const wasHoveringUndo = this.isHoveringUndo;
+
+            this.isHoveringCopy = this.isInBounds(pos, this.hitAreaCopy);
+            this.isHoveringUndo = this.hitAreaUndo && this.isInBounds(pos, this.hitAreaUndo);
+
+            if (this.isHoveringCopy !== wasHoveringCopy || this.isHoveringUndo !== wasHoveringUndo) {
                 node.setDirtyCanvas(true);
             }
             return false;
         }
 
         if (event.type === "pointerdown") {
-            if (this.isInBounds(pos, this.hitArea)) {
+            logger.verbose("pointerdown detected - checking bounds");
+
+            // Check Copy button click
+            const inCopyBounds = this.isInBounds(pos, this.hitAreaCopy);
+            if (inCopyBounds) {
+                logger.debug("Copy button clicked");
                 // Check if image is connected
                 const imageInput = node.inputs ? node.inputs.find(i => i.name === "image") : null;
                 if (imageInput && imageInput.link != null) {
+                    logger.debug("Image connected - calling copyFromImage");
                     // Get the connected node
                     const link = node.graph.links[imageInput.link];
                     if (link) {
@@ -1266,11 +1392,22 @@ class CopyImageButton {
                 node.setDirtyCanvas(true);
                 return true;
             }
+
+            // Check Undo button click
+            const inUndoBounds = this.hitAreaUndo && this.isInBounds(pos, this.hitAreaUndo);
+            if (inUndoBounds) {
+                logger.debug("Undo button clicked");
+                this.undoCopy(node);
+                return true;
+            }
+
+            logger.verbose("Click outside button bounds - ignoring");
         }
 
         if (event.type === "pointerup") {
-            if (this.isHovering) {
-                this.isHovering = false;
+            if (this.isHoveringCopy || this.isHoveringUndo) {
+                this.isHoveringCopy = false;
+                this.isHoveringUndo = false;
                 node.setDirtyCanvas(true);
             }
         }
@@ -1278,27 +1415,239 @@ class CopyImageButton {
         return false;
     }
 
-    copyFromImage(node, sourceNode) {
-        logger.debug("Copy from Image clicked!");
+    /**
+     * Hybrid B+C Copy Strategy
+     * Tier 1: Server endpoint (immediate for Load Image nodes)
+     * Tier 2: Parse info output (post-execution caching)
+     * Tier 3: Instructions dialog (user guidance)
+     */
+    async copyFromImage(node, sourceNode) {
+        logger.info("===== COPY FROM IMAGE CLICKED =====");
+        logger.debug("Copy from Image clicked! Starting hybrid B+C strategy...");
+        logger.debug(`Source node:`, sourceNode);
+        logger.debug(`Source node type: ${sourceNode?.type}`);
 
-        // Get image dimensions from last execution if available
-        // In ComfyUI, we need to wait for actual execution to get image data
-        // So instead, we'll use a different approach: trigger a lightweight execution
+        // Tier 1: Try server endpoint for Load Image nodes
+        try {
+            const filePath = this.getImageFilePath(sourceNode);
+            if (filePath) {
+                logger.debug(`Attempting server endpoint with path: ${filePath}`);
+                const dims = await this.fetchDimensionsFromServer(filePath);
+                if (dims && dims.success) {
+                    logger.debug(`Server success: ${dims.width}×${dims.height}`);
+                    this.populateWidgets(node, dims.width, dims.height);
+                    this.showSuccessNotification(node, dims.width, dims.height, "File");
+                    return;
+                }
+                logger.debug("Server endpoint failed or returned no data");
+            }
+        } catch (e) {
+            logger.debug(`Server endpoint error: ${e.message}`);
+        }
 
-        // For now, show a helpful message
+        // Tier 2: Try parsing cached info output
+        try {
+            const dims = this.parseDimensionsFromInfo(node);
+            if (dims) {
+                logger.debug(`Info parsing success: ${dims.width}×${dims.height}`);
+                this.populateWidgets(node, dims.width, dims.height);
+                this.showSuccessNotification(node, dims.width, dims.height, "Cached");
+                return;
+            }
+            logger.debug("No cached info output found");
+        } catch (e) {
+            logger.debug(`Info parsing error: ${e.message}`);
+        }
+
+        // Tier 3: Fallback - show instructions
+        logger.debug("All methods failed - showing instructions");
+        this.showInstructionsDialog();
+    }
+
+    /**
+     * Extract file path from LoadImage node
+     * Returns null if not a LoadImage node or path not found
+     */
+    getImageFilePath(sourceNode) {
+        if (!sourceNode) return null;
+
+        // Check if this is a LoadImage node
+        if (sourceNode.type === "LoadImage" || sourceNode.title?.includes("Load Image")) {
+            // Try to get the image filename from the widget
+            const imageWidget = sourceNode.widgets?.find(w => w.name === "image");
+            if (imageWidget && imageWidget.value) {
+                logger.debug(`Found LoadImage with filename: ${imageWidget.value}`);
+                return imageWidget.value;
+            }
+        }
+
+        logger.debug(`Source node type: ${sourceNode.type} - not a LoadImage node`);
+        return null;
+    }
+
+    /**
+     * Fetch dimensions from server endpoint
+     * Returns {width, height, success} or null on failure
+     */
+    async fetchDimensionsFromServer(imagePath) {
+        try {
+            const response = await fetch('/smart-resolution/get-dimensions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ image_path: imagePath })
+            });
+
+            if (!response.ok) {
+                logger.debug(`Server responded with status: ${response.status}`);
+                return null;
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (e) {
+            logger.error(`Server request failed: ${e}`);
+            return null;
+        }
+    }
+
+    /**
+     * Parse dimensions from cached info output
+     * Looks for patterns like "From Image (Exact: 1920×1080)" or "From Image (AR: 16:9, Source: 1920×1080)"
+     */
+    parseDimensionsFromInfo(node) {
+        // Get the info widget value (last execution output)
+        const infoWidget = node.widgets?.find(w => w.name === "info");
+        if (!infoWidget || !infoWidget.value) {
+            logger.debug("No info widget or value found");
+            return null;
+        }
+
+        const infoText = infoWidget.value;
+        logger.debug(`Parsing info text: ${infoText}`);
+
+        // Pattern 1: "From Image (Exact: 1920×1080)"
+        const exactMatch = infoText.match(/From Image \(Exact: (\d+)×(\d+)\)/);
+        if (exactMatch) {
+            return {
+                width: parseInt(exactMatch[1]),
+                height: parseInt(exactMatch[2])
+            };
+        }
+
+        // Pattern 2: "From Image (AR: 16:9, Source: 1920×1080)"
+        const arMatch = infoText.match(/From Image \(AR: [^,]+, Source: (\d+)×(\d+)\)/);
+        if (arMatch) {
+            return {
+                width: parseInt(arMatch[1]),
+                height: parseInt(arMatch[2])
+            };
+        }
+
+        logger.debug("No dimension patterns found in info text");
+        return null;
+    }
+
+    /**
+     * Populate dimension widgets with extracted values
+     * IMPORTANT: Only updates VALUES, preserves user's ON/OFF toggle states
+     * User decides which calculation mode to use (MP, W+H, W+AR, etc.)
+     */
+    populateWidgets(node, width, height) {
+        logger.debug(`Populating widgets: ${width}×${height}`);
+
+        // Find the dimension widgets
+        const widthWidget = node.widgets?.find(w => w.name === "dimension_width");
+        const heightWidget = node.widgets?.find(w => w.name === "dimension_height");
+
+        if (!widthWidget || !heightWidget) {
+            logger.error("Could not find dimension widgets!");
+            return;
+        }
+
+        // Save current values to undo stack BEFORE changing
+        this.undoStack = {
+            width: { ...widthWidget.value },
+            height: { ...heightWidget.value }
+        };
+        this.showUndo = true;
+        logger.debug('Saved undo state:', this.undoStack);
+
+        // ONLY update values - preserve user's toggle states
+        // User may want dimensions copied but still use MP+AR calculation
+        widthWidget.value = { on: widthWidget.value.on, value: width };
+        heightWidget.value = { on: heightWidget.value.on, value: height };
+
+        logger.debug(`Updated WIDTH=${width} (toggle: ${widthWidget.value.on ? 'ON' : 'OFF'})`);
+        logger.debug(`Updated HEIGHT=${height} (toggle: ${heightWidget.value.on ? 'ON' : 'OFF'})`);
+
+        // Mark node as modified and refresh canvas
+        node.setDirtyCanvas(true, true);
+        logger.debug("Widgets populated successfully (preserved user's toggle states)");
+    }
+
+    /**
+     * Undo the last copy operation
+     * Restores previous WIDTH/HEIGHT values (including toggle states)
+     */
+    undoCopy(node) {
+        if (!this.undoStack) {
+            logger.debug('No undo state available');
+            return;
+        }
+
+        logger.debug('Restoring undo state:', this.undoStack);
+
+        // Find the dimension widgets
+        const widthWidget = node.widgets?.find(w => w.name === "dimension_width");
+        const heightWidget = node.widgets?.find(w => w.name === "dimension_height");
+
+        if (!widthWidget || !heightWidget) {
+            logger.error("Could not find dimension widgets for undo!");
+            return;
+        }
+
+        // Restore previous values (including toggle states)
+        widthWidget.value = { ...this.undoStack.width };
+        heightWidget.value = { ...this.undoStack.height };
+
+        logger.info(`↶ Undone: Restored WIDTH=${this.undoStack.width.value} (${this.undoStack.width.on ? 'ON' : 'OFF'}), HEIGHT=${this.undoStack.height.value} (${this.undoStack.height.on ? 'ON' : 'OFF'})`);
+
+        // Clear undo state and hide button
+        this.undoStack = null;
+        this.showUndo = false;
+
+        // Mark node as modified and refresh canvas
+        node.setDirtyCanvas(true, true);
+    }
+
+    /**
+     * Show success notification
+     */
+    showSuccessNotification(node, width, height, source) {
+        const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+        const divisor = gcd(width, height);
+        const aspectRatio = `${width/divisor}:${height/divisor}`;
+
+        logger.info(`✓ Copied from ${source}: ${width}×${height} (${aspectRatio})`);
+
+        // Optional: Could show a brief toast notification here
+        // For now, the log message is sufficient
+    }
+
+    /**
+     * Show instructions dialog (Tier 3 fallback)
+     */
+    showInstructionsDialog() {
         const canvas = app.canvas;
         canvas.prompt(
             "Copy Image Dimensions",
-            "To copy dimensions:\n1. Run the workflow once (Queue Prompt)\n2. Image dimensions will auto-populate\n\nOr manually enter width and height from your source image.",
+            "To copy dimensions:\n\n1. Run the workflow once (Queue Prompt)\n2. After execution, click this button again\n3. Cached dimensions will be extracted\n\nOr manually enter width and height from your source image.\n\n(Server endpoint requires Load Image node with file path)",
             null,
             event
         );
-
-        logger.debug("Copy from image - prompting user for manual entry alternative");
-
-        // TODO: In future version, could add actual dimension extraction by:
-        // 1. Accessing node's output cache if available
-        // 2. Or adding a Python endpoint to extract dims without full execution
+        logger.debug("Showing instructions dialog (all auto-methods failed)");
     }
 
     isInBounds(pos, bounds) {
@@ -1367,8 +1716,9 @@ app.registerExtension({
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
                 if (defaultScaleWidget) {
                     defaultScaleWidget.type = "converted-widget";
-                    defaultScaleWidget.computeSize = () => [0, -4];  // Hide it
-                    logger.debug('Hidden default scale widget');
+                    defaultScaleWidget.computeSize = () => [0, -4];  // Hide it from layout
+                    defaultScaleWidget.draw = () => {};  // Prevent it from rendering entirely
+                    logger.debug('Hidden default scale widget (blocked draw method)');
                 }
 
                 // Set initial size (widgets will auto-adjust)
@@ -1461,6 +1811,7 @@ app.registerExtension({
             };
 
             // Add visual indicator when image input is connected
+            // Also disable/enable USE_IMAGE widget based on connection state
             const onConnectionsChange = nodeType.prototype.onConnectionsChange;
             nodeType.prototype.onConnectionsChange = function(type, index, connected, link_info) {
                 if (onConnectionsChange) {
@@ -1472,19 +1823,26 @@ app.registerExtension({
                     const input = this.inputs[index];
 
                     if (input.name === "image") {
+                        // Find the ImageModeWidget
+                        const imageModeWidget = this.widgets?.find(w => w.name === "image_mode");
+
                         if (connected) {
-                            // Image connected - add subtle visual indicator
-                            this.bgcolor = "#1a2a3a";  // Slightly different background
-                            this.color = "#4a7a9a";    // Blueish tint
-                            logger.debug('Image input connected - visual indicator enabled');
+                            // Mark image as connected (enable asymmetric toggle logic)
+                            if (imageModeWidget) {
+                                imageModeWidget.imageDisconnected = false;
+                            }
+
+                            logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {
-                            // Image disconnected - restore default colors
-                            this.bgcolor = null;
-                            this.color = null;
-                            logger.debug('Image input disconnected - visual indicator removed');
+                            // Mark image as disconnected (enable asymmetric toggle logic)
+                            if (imageModeWidget) {
+                                imageModeWidget.imageDisconnected = true;
+                            }
+
+                            logger.debug('Image input disconnected - USE_IMAGE asymmetric toggle active (can turn OFF, cannot turn ON)');
                         }
 
-                        // Trigger canvas redraw
+                        // Trigger canvas redraw to update disabled state visually
                         if (this.graph && this.graph.canvas) {
                             this.graph.canvas.setDirty(true);
                         }

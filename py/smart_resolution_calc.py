@@ -99,6 +99,83 @@ class SmartResolutionCalc:
     FUNCTION = "calculate_dimensions"
     CATEGORY = "Smart Resolution"
 
+    @staticmethod
+    def get_image_dimensions_from_path(image_path):
+        """
+        Extract image dimensions from a file path using PIL.
+
+        Security: Validates path is within ComfyUI directories before reading.
+        Handles both full paths and filenames (searches in input directory).
+
+        Args:
+            image_path: Absolute path, relative path, or filename
+
+        Returns:
+            dict: {'width': int, 'height': int, 'success': bool, 'error': str}
+        """
+        try:
+            import folder_paths
+
+            # Check for directory traversal attempts early
+            if '..' in image_path:
+                logger.warning(f"Rejected path with traversal attempt: {image_path}")
+                return {
+                    'success': False,
+                    'error': 'Invalid path'
+                }
+
+            # If image_path is just a filename (no path separators), look in input directory
+            if not os.path.dirname(image_path):
+                # Just a filename - construct path in input directory
+                input_dir = folder_paths.get_input_directory()
+                abs_path = os.path.join(input_dir, image_path)
+                logger.debug(f"Filename detected, using input directory: {abs_path}")
+            else:
+                # Has directory components - normalize as absolute path
+                abs_path = os.path.abspath(image_path)
+
+            # Security: Only allow paths within ComfyUI directories
+            allowed_dirs = [
+                os.path.abspath(folder_paths.get_input_directory()),
+                os.path.abspath(folder_paths.get_output_directory()),
+                os.path.abspath(folder_paths.get_temp_directory()),
+            ]
+
+            # Check if path is within allowed directories
+            is_allowed = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+
+            if not is_allowed:
+                logger.warning(f"Rejected path outside allowed directories: {abs_path}")
+                return {
+                    'success': False,
+                    'error': 'Path outside allowed directories'
+                }
+
+            # Check file exists
+            if not os.path.exists(abs_path):
+                logger.debug(f"File not found: {abs_path}")
+                return {
+                    'success': False,
+                    'error': f'File not found: {os.path.basename(abs_path)}'
+                }
+
+            # Read image dimensions using PIL
+            with Image.open(abs_path) as img:
+                width, height = img.size
+                logger.debug(f"Successfully read dimensions: {width}×{height} from {abs_path}")
+                return {
+                    'width': width,
+                    'height': height,
+                    'success': True
+                }
+
+        except Exception as e:
+            logger.error(f"Error reading image dimensions: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def __init__(self):
         self.device = comfy.model_management.intermediate_device()
 
