@@ -140,7 +140,6 @@ class TooltipManager {
                 advancedMode: false
             };
         } catch (e) {
-            logger.verbose('Failed to load tooltip config, using defaults:', e);
             return { showInfoIcons: true, defaultDelay: 250, fullDelay: 1500 };
         }
     }
@@ -173,7 +172,6 @@ class TooltipManager {
         };
         this.quickShown = false;
         this.fullShown = false;
-        logger.verbose('Started tooltip hover (canvas-global):', tooltipContent.quick, 'bounds:', globalBounds);
     }
 
     updateHover() {
@@ -184,18 +182,15 @@ class TooltipManager {
 
         if (!this.quickShown && elapsed >= delay) {
             this.quickShown = true;
-            logger.debug('Showing quick tooltip');
         }
 
         if (!this.fullShown && elapsed >= this.config.fullDelay) {
             this.fullShown = true;
-            logger.debug('Showing full tooltip');
         }
     }
 
     endHover() {
         if (this.activeTooltip) {
-            logger.verbose('Ended tooltip hover');
         }
         this.activeTooltip = null;
         this.hoverStartTime = null;
@@ -208,7 +203,6 @@ class TooltipManager {
         const tooltipWidth = 300;
         const tooltipHeight = 150; // Approximate, will be calculated during draw
 
-        logger.verbose(`calculateTooltipPosition - iconBounds:`, iconBounds, `canvasBounds:`, canvasBounds);
 
         let x = iconBounds.x + iconBounds.width + 10; // 10px right of icon
         let y = iconBounds.y;
@@ -216,23 +210,18 @@ class TooltipManager {
         // Check right edge clipping
         if (canvasBounds && x + tooltipWidth > canvasBounds.width) {
             x = iconBounds.x - tooltipWidth - 10; // Flip to left
-            logger.verbose('Flipping tooltip to left (would clip right edge)');
         }
 
         // Check bottom edge clipping
         if (canvasBounds && y + tooltipHeight > canvasBounds.height) {
             y = Math.max(10, canvasBounds.height - tooltipHeight - 10);
-            logger.verbose('Adjusting tooltip Y position (would clip bottom)');
         }
 
-        logger.verbose(`calculateTooltipPosition - result: x=${x}, y=${y}`);
 
         return { x, y };
     }
 
     draw(ctx, canvasBounds) {
-        logger.verbose(`TooltipManager.draw() called - hasActiveTooltip: ${!!this.activeTooltip}, showInfoIcons: ${this.config.showInfoIcons}`);
-
         if (!this.activeTooltip || !this.config.showInfoIcons) return;
 
         this.updateHover();
@@ -240,25 +229,17 @@ class TooltipManager {
         const tooltip = this.activeTooltip;
         const pos = tooltip.position;
 
-        logger.verbose(`Tooltip position:`, pos, `quickShown: ${this.quickShown}, fullShown: ${this.fullShown}`);
-        logger.verbose(`Tooltip content keys:`, Object.keys(tooltip.content));
-
         // Determine which content to show
         let content = '';
         if (this.fullShown && tooltip.content.full) {
             content = tooltip.content.full;
-            logger.verbose('Using full tooltip content');
         } else if (this.quickShown && tooltip.content.quick) {
             content = tooltip.content.quick;
-            logger.verbose('Using quick tooltip content');
         }
 
         if (!content) {
-            logger.verbose('No content to show - returning early');
             return;
         }
-
-        logger.verbose(`Drawing tooltip with content: ${content.substring(0, 50)}...`);
 
         // Draw tooltip
         const padding = 12;
@@ -268,10 +249,6 @@ class TooltipManager {
         // Wrap text
         const lines = this.wrapText(ctx, content, maxWidth - padding * 2);
         const tooltipHeight = lines.length * lineHeight + padding * 2;
-
-        logger.verbose(`About to draw tooltip rect at pos: {x: ${pos.x}, y: ${pos.y}}, size: {w: ${maxWidth}, h: ${tooltipHeight}}`);
-        logger.verbose(`Icon bounds:`, tooltip.bounds);
-        logger.verbose(`Current transform:`, ctx.getTransform());
 
         ctx.save();
 
@@ -289,7 +266,6 @@ class TooltipManager {
         ctx.fill();
         ctx.stroke();
 
-        logger.verbose('Tooltip rect drawn (fill and stroke completed)');
 
         // Text
         ctx.fillStyle = '#ffffff';
@@ -314,7 +290,6 @@ class TooltipManager {
     drawAtScreenCoords(ctx, screenBounds, canvasBounds) {
         // Draw tooltip at graph level using screen coordinates
         // Called from app.canvas.onDrawForeground with identity transform
-        logger.verbose(`drawAtScreenCoords() called - screenBounds:`, screenBounds);
 
         if (!this.activeTooltip || !this.config.showInfoIcons) return;
 
@@ -328,18 +303,14 @@ class TooltipManager {
         let content = '';
         if (this.fullShown && tooltip.content.full) {
             content = tooltip.content.full;
-            logger.verbose('Using full tooltip content');
         } else if (this.quickShown && tooltip.content.quick) {
             content = tooltip.content.quick;
-            logger.verbose('Using quick tooltip content');
         }
 
         if (!content) {
-            logger.verbose('No content to show - returning early');
             return;
         }
 
-        logger.verbose(`Drawing tooltip with content: ${content.substring(0, 50)}...`);
 
         // Calculate tooltip position in screen space
         const tooltipWidth = 280;
@@ -351,16 +322,13 @@ class TooltipManager {
         // Check right edge clipping
         if (x + tooltipWidth > canvasBounds.width) {
             x = screenBounds.x - tooltipWidth - 10; // Flip to left
-            logger.verbose('Flipping tooltip to left (would clip right edge)');
         }
 
         // Check bottom edge clipping
         if (y + tooltipHeight > canvasBounds.height) {
             y = Math.max(10, canvasBounds.height - tooltipHeight - 10);
-            logger.verbose('Adjusting tooltip Y position (would clip bottom)');
         }
 
-        logger.verbose(`Tooltip screen position: x=${x}, y=${y}`);
 
         // Draw tooltip
         const padding = 12;
@@ -380,7 +348,6 @@ class TooltipManager {
             y = Math.max(10, canvasBounds.height - actualTooltipHeight - 10);
         }
 
-        logger.verbose(`About to draw tooltip rect at screen pos: {x: ${x}, y: ${y}}, size: {w: ${maxWidth}, h: ${actualTooltipHeight}}`);
 
         ctx.save();
 
@@ -397,7 +364,6 @@ class TooltipManager {
         ctx.fill();
         ctx.stroke();
 
-        logger.verbose('Tooltip rect drawn (fill and stroke completed)');
 
         // Text
         ctx.fillStyle = '#ffffff';
@@ -501,7 +467,6 @@ class InfoIcon {
         // Store label bounds as hit area
         this.hitArea = { x, y, width, height };
 
-        logger.verbose(`InfoIcon.setHitArea() - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
     }
 
     /**
@@ -519,7 +484,6 @@ class InfoIcon {
 
         const inBounds = this.isInBounds(pos, this.hitArea);
 
-        logger.verbose(`InfoIcon.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}], hitArea:`, this.hitArea, `inBounds: ${inBounds}`);
 
         if (event.type === 'pointermove') {
             if (inBounds && !this.isHovering) {
@@ -576,14 +540,11 @@ function wrapWidgetWithTooltip(widget, tooltipContent, node) {
 
     // Wrap mouse method to handle tooltip events
     widget.mouse = function(event, pos, node) {
-        logger.verbose(`wrapWidgetWithTooltip.mouse() - widget: ${this.name}, event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
-
         // Check tooltip first
         if (this.infoIcon) {
             const canvasBounds = { width: node.size[0], height: node.size[1] };
             const tooltipHandled = this.infoIcon.mouse(event, pos, canvasBounds, node.pos);
             if (tooltipHandled) {
-                logger.debug(`Native widget ${this.name} - tooltip handled event`);
                 node.setDirtyCanvas(true);
                 return true; // Tooltip handled the event
             }
@@ -1997,8 +1958,6 @@ class ImageModeWidget {
 
         // Set tooltip trigger area to the label text itself (no icon drawn)
         // Hover over "USE IMAGE?" label shows tooltip, Shift+Click opens docs
-        logger.verbose(`ImageModeWidget.draw() - width: ${width}, labelStart: ${labelStartX}, labelWidth: ${labelTextWidth}, modeX: ${modeX}, y: ${y}`);
-
         this.infoIcon.setHitArea(labelStartX, y, labelTextWidth, height);
 
         ctx.restore();
@@ -2039,8 +1998,6 @@ class ImageModeWidget {
      * - Block mode selector entirely
      */
     mouse(event, pos, node) {
-        logger.verbose(`ImageModeWidget.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
-
         // Check info icon first (before other interactions)
         // Pass node position for coordinate conversion (node-local → canvas-global)
         const canvasBounds = { width: node.size[0], height: node.size[1] };
@@ -2245,8 +2202,6 @@ class CopyImageButton {
     }
 
     mouse(event, pos, node) {
-        logger.verbose(`CopyImageButton.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
-
         if (event.type === "pointermove") {
             // Check hover state for both buttons
             const wasHoveringCopy = this.isHoveringCopy;
@@ -2262,7 +2217,6 @@ class CopyImageButton {
         }
 
         if (event.type === "pointerdown") {
-            logger.verbose("pointerdown detected - checking bounds");
 
             // Check Copy button click
             const inCopyBounds = this.isInBounds(pos, this.hitAreaCopy);
@@ -2296,7 +2250,6 @@ class CopyImageButton {
                 return true;
             }
 
-            logger.verbose("Click outside button bounds - ignoring");
         }
 
         if (event.type === "pointerup") {
@@ -2611,28 +2564,16 @@ app.registerExtension({
                     ctx.save();
                     ctx.font = "13px sans-serif";
 
-                    let nativeWidgetsWithTooltips = 0;
                     for (const widget of this.widgets) {
-                        if (widget.infoIcon && widget.type !== "custom") {
-                            nativeWidgetsWithTooltips++;
-                            logger.debug(`Native widget ${widget.name} - has infoIcon, type: ${widget.type}, last_y: ${widget.last_y}`);
+                        if (widget.infoIcon && widget.type !== "custom" && widget.last_y !== undefined) {
+                            // Native widget with tooltip - last_y is set by LiteGraph during rendering
+                            const widgetHeight = LiteGraph.NODE_WIDGET_HEIGHT;
+                            const labelText = widget.label || widget.name;
+                            const labelWidth = ctx.measureText(labelText).width;
 
-                            if (widget.last_y !== undefined) {
-                                // Native widget with tooltip - last_y is set by LiteGraph during rendering
-                                const widgetHeight = LiteGraph.NODE_WIDGET_HEIGHT;
-                                const labelText = widget.label || widget.name;
-                                const labelWidth = ctx.measureText(labelText).width;
-
-                                // Set hit area using LiteGraph's last_y position
-                                widget.infoIcon.setHitArea(15, widget.last_y, labelWidth, widgetHeight);
-
-                                logger.debug(`Native widget ${widget.name} - set hit area at y=${widget.last_y}, width=${labelWidth}, height=${widgetHeight}`);
-                            }
+                            // Set hit area using LiteGraph's last_y position
+                            widget.infoIcon.setHitArea(15, widget.last_y, labelWidth, widgetHeight);
                         }
-                    }
-
-                    if (nativeWidgetsWithTooltips === 0) {
-                        logger.debug('No native widgets with tooltips found in drawWidgets');
                     }
 
                     ctx.restore();
@@ -2914,9 +2855,6 @@ app.registerExtension({
                 height: bounds.height * transform.d
             };
 
-            logger.verbose('Transform:', transform);
-            logger.verbose('Canvas-global bounds:', bounds);
-            logger.verbose('Screen bounds:', screenBounds);
 
             // Get device pixel ratio for proper scaling
             const dpr = window.devicePixelRatio || 1;
@@ -2940,7 +2878,6 @@ app.registerExtension({
                 height: screenBounds.height / dpr
             };
 
-            logger.verbose('CSS bounds:', cssBounds, 'Canvas bounds (CSS):', canvasBounds);
 
             // Draw tooltip in CSS pixel space (with DPR transform applied)
             tooltipManager.drawAtScreenCoords(ctx, cssBounds, canvasBounds);

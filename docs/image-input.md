@@ -10,44 +10,44 @@ The image input feature allows you to connect images to the Smart Resolution Cal
 ## Quick Start
 
 1. Connect an IMAGE output to the `image` input on Smart Resolution Calculator
-2. Enable `enable_image_input` toggle (ON by default)
-3. Choose extraction mode with `use_image_dimensions` toggle:
-   - **OFF** (AR Only): Extracts aspect ratio, uses with megapixel setting
-   - **ON** (Exact Dims): Uses exact image dimensions with scale applied
+2. Toggle **USE IMAGE?** to ON (enabled by default when image connected)
+3. Choose extraction mode:
+   - **AR Only**: Extracts aspect ratio, combines with megapixel setting
+   - **Exact Dims**: Uses exact image dimensions with scale applied
 4. Check the **info** output to verify extraction mode
 
 ## Parameters
 
-### enable_image_input
+### USE IMAGE?
 
-**Type**: Boolean toggle
-**Default**: ON (Enabled)
-**Purpose**: Turn image extraction on/off without disconnecting the image input
+**Type**: Composite widget (toggle + mode selector)
+**Default**: ON with "AR Only" mode
+**Purpose**: Control image dimension extraction and mode
 
-**When to use**:
-- A/B testing image dimensions vs manual settings
-- Temporarily override image input without breaking connections
-- Quick switching between image-based and manual workflows
+**Widget Components**:
+1. **Toggle** (left side): Turn image extraction ON/OFF
+2. **Mode Selector** (right side): Choose "AR Only" or "Exact Dims"
 
-**Tooltip**: *"Enable/disable image dimension extraction without disconnecting the image input"*
+**Behavior**:
+- **Image Disconnected**: Can turn OFF but cannot turn ON (asymmetric behavior)
+- **Image Connected**: Full control of toggle and mode selector
+- Mode selector only active when toggle is ON and image is connected
 
-### use_image_dimensions
-
-**Type**: Boolean toggle
-**Default**: OFF (AR Only)
-**Purpose**: Choose between aspect ratio extraction or exact dimension matching
-
-**AR Only Mode** (OFF):
+**AR Only Mode**:
 - Extracts aspect ratio from image
-- Uses current megapixel setting to calculate dimensions
-- Allows resolution scaling while maintaining proportions
+- Combines with your MEGAPIXEL, WIDTH, or HEIGHT settings
+- Allows resolution scaling while maintaining image proportions
+- Best for: Flexible resolution matching with adjustable megapixels
 
-**Exact Dims Mode** (ON):
+**Exact Dims Mode**:
 - Uses exact image dimensions
-- Applies scale multiplier if not 1.0x
-- Overrides manual WIDTH/HEIGHT settings (warns in info output)
+- Applies SCALE multiplier if not 1.0x
+- Overrides manual WIDTH/HEIGHT settings (shows warning in info output)
+- Best for: Precise dimension matching, upscaling workflows
 
-**Tooltip**: *"AR Only: Extract aspect ratio and use with megapixel calculation | Exact Dims: Use exact image dimensions (with scale applied)"*
+**Tooltip**:
+- *Hover over "USE IMAGE?" label for quick help*
+- *Shift+Click label for full documentation (opens this page)*
 
 ## Visual Indicators
 
