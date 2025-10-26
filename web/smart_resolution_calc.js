@@ -290,16 +290,69 @@ class ScaleWidget {
         // Check if we should use cached image dimensions
         const imageModeWidgetForCache = node.widgets?.find(w => w.name === "image_mode");
         const useImageForCache = imageModeWidgetForCache?.value?.on;
+        const imageMode = imageModeWidgetForCache?.value?.value; // 0=AR Only, 1=Exact Dims
 
-        logger.verbose(`[ScaleWidget] calculatePreview: USE_IMAGE=${useImageForCache}, cache=${this.imageDimensionsCache ? 'populated' : 'empty'}`);
+        logger.verbose(`[ScaleWidget] calculatePreview: USE_IMAGE=${useImageForCache}, mode=${imageMode === 0 ? 'AR Only' : imageMode === 1 ? 'Exact Dims' : 'unknown'}, cache=${this.imageDimensionsCache ? 'populated' : 'empty'}`);
 
         if (useImageForCache && this.imageDimensionsCache) {
-            // Use cached image dimensions as base (override widget calculations)
-            baseW = this.imageDimensionsCache.width;
-            baseH = this.imageDimensionsCache.height;
-            logger.info(`✓ Scale preview using cached image dimensions: ${baseW}×${baseH}`);
-        } else {
-            if (useImageForCache) {
+            if (imageMode === 1) {
+                // Exact Dims mode - use raw image dimensions (ignore all user settings)
+                baseW = this.imageDimensionsCache.width;
+                baseH = this.imageDimensionsCache.height;
+                logger.info(`✓ Scale preview using exact image dimensions: ${baseW}×${baseH}`);
+            } else {
+                // AR Only mode (imageMode === 0) - extract AR and use with user's dimension settings
+                const imageAR = this.imageDimensionsCache.width / this.imageDimensionsCache.height;
+
+                // Validate AR before use
+                if (isNaN(imageAR) || !isFinite(imageAR) || imageAR <= 0) {
+                    logger.debug(`[ScaleWidget] Invalid image AR (${imageAR}), falling back to widget calculation`);
+                    // Clear cache temporarily to trigger fallback
+                    const savedCache = this.imageDimensionsCache;
+                    this.imageDimensionsCache = null;
+                    // Will fall through to widget-based calculation below
+                    // Restore cache after (for next time)
+                    setTimeout(() => { this.imageDimensionsCache = savedCache; }, 0);
+                } else {
+                    // Use image AR with user's dimension settings
+                    logger.debug(`[ScaleWidget] AR Only mode - using image AR: ${imageAR.toFixed(3)}`);
+
+                    if (useWidth && useHeight) {
+                        // Both W+H specified - use as-is (ignore AR)
+                        baseW = widthWidget.value.value;
+                        baseH = heightWidget.value.value;
+                        logger.verbose(`[ScaleWidget] Using user WIDTH+HEIGHT: ${baseW}×${baseH}`);
+                    } else if (useWidth) {
+                        // Width specified - calculate height from image AR
+                        baseW = widthWidget.value.value;
+                        baseH = Math.round(baseW / imageAR);
+                        logger.verbose(`[ScaleWidget] Computed HEIGHT from WIDTH ${baseW} ÷ AR ${imageAR.toFixed(3)} = ${baseH}`);
+                    } else if (useHeight) {
+                        // Height specified - calculate width from image AR
+                        baseH = heightWidget.value.value;
+                        baseW = Math.round(baseH * imageAR);
+                        logger.verbose(`[ScaleWidget] Computed WIDTH from HEIGHT ${baseH} × AR ${imageAR.toFixed(3)} = ${baseW}`);
+                    } else if (useMp) {
+                        // Megapixel mode - calculate from MP and image AR
+                        const targetMp = mpWidget.value.value * 1_000_000;
+                        baseH = Math.sqrt(targetMp / imageAR);
+                        baseW = baseH * imageAR;
+                        logger.verbose(`[ScaleWidget] Computed from MP ${mpWidget.value.value} and AR ${imageAR.toFixed(3)}: ${Math.round(baseW)}×${Math.round(baseH)}`);
+                    } else {
+                        // No settings enabled - use raw image dimensions as fallback
+                        baseW = this.imageDimensionsCache.width;
+                        baseH = this.imageDimensionsCache.height;
+                        logger.verbose(`[ScaleWidget] No dimension settings, using raw image dimensions: ${baseW}×${baseH}`);
+                    }
+
+                    logger.info(`✓ Scale preview using image AR (${imageAR.toFixed(2)}) with user settings: ${Math.round(baseW)}×${Math.round(baseH)}`);
+                }
+            }
+        }
+
+        if (!useImageForCache || !this.imageDimensionsCache) {
+            // Widget-based calculation (fallback when no image or cache empty)
+            if (useImageForCache && !this.imageDimensionsCache) {
                 logger.debug(`[ScaleWidget] Cache empty, falling back to widget-based calculation`);
             }
             // Calculate base dimensions with proper aspect ratio handling (existing logic)

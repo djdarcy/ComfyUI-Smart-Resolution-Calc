@@ -10,6 +10,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Info icon tooltip system for advanced features
 - Additional testing and polish
+- Fix asymmetric toggle logic incorrectly applied to dimension widgets (deferred from alpha4)
+
+## [0.2.0-alpha5] - 2025-10-25
+
+### Fixed
+- **Scale Tooltip AR Only Mode**: Tooltip now correctly respects user's dimension settings when USE_IMAGE in "AR Only" mode
+- **Accurate AR-Based Calculation**: Extracts aspect ratio from image and applies to user's WIDTH/HEIGHT/MEGAPIXEL settings
+- **Mode-Aware Logic**: Distinguishes between "AR Only" (extract AR, use with settings) and "Exact Dims" (use raw image dimensions)
+
+### Technical (Frontend)
+- **Mode Detection**: Check `imageMode` value (0=AR Only, 1=Exact Dims) to determine calculation path
+- **AR Extraction**: Compute `imageAR = width / height` from cached image dimensions
+- **AR-Based Calculation**: Use extracted AR with user's dimension settings:
+  - HEIGHT enabled → compute WIDTH from HEIGHT × AR
+  - WIDTH enabled → compute HEIGHT from WIDTH ÷ AR
+  - MEGAPIXEL enabled → compute dimensions from MP and AR
+  - Both W+H enabled → use as-is (ignore AR)
+  - No settings → use raw image dimensions
+- **AR Validation**: Check for NaN, infinity, zero before using AR (graceful fallback)
+- **Enhanced Logging**: Show mode, extracted AR, and computed dimensions in debug logs
+
+### Behavior Changes
+- **AR Only Mode** (imageMode=0): Tooltip shows computed dimensions from image AR + user settings
+  - Example: Image 1024×1024 (1:1), HEIGHT=1200 → Base: 1200×1200
+  - Previously showed: Base: 1024×1024 (incorrect - ignored user's HEIGHT)
+- **Exact Dims Mode** (imageMode=1): Tooltip shows raw image dimensions (unchanged)
+  - Example: Image 1024×1024, HEIGHT=1200 → Base: 1024×1024 (correct - ignores HEIGHT)
+
+### What This Fixes
+**Problem**: In alpha4, Scale tooltip ignored user's dimension settings in "AR Only" mode
+- User sets HEIGHT=1200 with 1024×1024 image
+- Expected: Base 1200×1200 (computed from 1:1 AR + HEIGHT)
+- Got: Base 1024×1024 (raw image dimensions)
+
+**Solution**: Extract AR from image, apply to user's settings (matches backend logic)
+- Now shows: Base 1200×1200 (computed WIDTH from HEIGHT × 1:1 AR)
+- Tooltip preview matches actual backend calculation
+
+### Testing Recommendations
+Test all combinations of USE_IMAGE modes and dimension settings:
+1. AR Only + HEIGHT → should compute WIDTH from AR
+2. AR Only + WIDTH → should compute HEIGHT from AR
+3. AR Only + MEGAPIXEL → should compute dimensions from AR + MP
+4. Exact Dims + HEIGHT → should ignore HEIGHT, use image dimensions
+5. Exact Dims + WIDTH → should ignore WIDTH, use image dimensions
 
 ## [0.2.0-alpha4] - 2025-10-25
 
