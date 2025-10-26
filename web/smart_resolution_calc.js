@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { TOOLTIP_CONTENT } from "./tooltip_content.js";
 
 /**
  * Smart Resolution Calculator - Compact Custom Widgets
@@ -103,6 +104,464 @@ const ValueBehavior = {
     ALWAYS: 'always',            // Always editable
     CONDITIONAL: 'conditional'   // Only editable when conditions met
 };
+
+/**
+ * Tooltip Manager - Singleton for tooltip rendering and state management
+ *
+ * Manages tooltip display on canvas with three-level help system:
+ * - Quick (hover): Shows after hoverDelay (default 500ms)
+ * - Full (extended hover): Shows after fullDelay (default 2s)
+ * - Docs (click icon): Opens external documentation in browser
+ *
+ * Features:
+ * - Canvas-based rendering with text wrapping
+ * - Smart positioning (flips to avoid clipping)
+ * - Configurable delays per tooltip
+ * - Global show/hide toggle via localStorage
+ */
+class TooltipManager {
+    constructor() {
+        this.activeTooltip = null;
+        this.hoverStartTime = null;
+        this.quickShown = false;
+        this.fullShown = false;
+
+        // Load config from localStorage
+        this.config = this.loadConfig();
+    }
+
+    loadConfig() {
+        try {
+            const config = localStorage.getItem('smart-res-calc-tooltip-config');
+            return config ? JSON.parse(config) : {
+                showInfoIcons: true,
+                defaultDelay: 250,    // Quick tooltip delay (ms) - snappier feel
+                fullDelay: 1500,      // Full tooltip delay (ms) - faster access to full info
+                advancedMode: false
+            };
+        } catch (e) {
+            logger.verbose('Failed to load tooltip config, using defaults:', e);
+            return { showInfoIcons: true, defaultDelay: 250, fullDelay: 1500 };
+        }
+    }
+
+    saveConfig() {
+        try {
+            localStorage.setItem('smart-res-calc-tooltip-config', JSON.stringify(this.config));
+            logger.debug('Saved tooltip config:', this.config);
+        } catch (e) {
+            logger.error('Failed to save tooltip config:', e);
+        }
+    }
+
+    startHover(tooltipContent, iconBounds, canvasBounds, nodePos) {
+        this.hoverStartTime = Date.now();
+
+        // Convert icon bounds from node-local to canvas-global coordinates
+        const globalBounds = nodePos ? {
+            x: iconBounds.x + nodePos[0],
+            y: iconBounds.y + nodePos[1],
+            width: iconBounds.width,
+            height: iconBounds.height
+        } : iconBounds;
+
+        // Store canvas-global bounds (will be converted to screen coords in graph-level draw)
+        this.activeTooltip = {
+            content: tooltipContent,
+            bounds: globalBounds,
+            position: null // Calculated at draw time with screen coords
+        };
+        this.quickShown = false;
+        this.fullShown = false;
+        logger.verbose('Started tooltip hover (canvas-global):', tooltipContent.quick, 'bounds:', globalBounds);
+    }
+
+    updateHover() {
+        if (!this.activeTooltip) return;
+
+        const elapsed = Date.now() - this.hoverStartTime;
+        const delay = this.activeTooltip.content.hoverDelay || this.config.defaultDelay;
+
+        if (!this.quickShown && elapsed >= delay) {
+            this.quickShown = true;
+            logger.debug('Showing quick tooltip');
+        }
+
+        if (!this.fullShown && elapsed >= this.config.fullDelay) {
+            this.fullShown = true;
+            logger.debug('Showing full tooltip');
+        }
+    }
+
+    endHover() {
+        if (this.activeTooltip) {
+            logger.verbose('Ended tooltip hover');
+        }
+        this.activeTooltip = null;
+        this.hoverStartTime = null;
+        this.quickShown = false;
+        this.fullShown = false;
+    }
+
+    calculateTooltipPosition(iconBounds, canvasBounds) {
+        // Smart positioning: right of icon by default, flip left if clipping
+        const tooltipWidth = 300;
+        const tooltipHeight = 150; // Approximate, will be calculated during draw
+
+        logger.verbose(`calculateTooltipPosition - iconBounds:`, iconBounds, `canvasBounds:`, canvasBounds);
+
+        let x = iconBounds.x + iconBounds.width + 10; // 10px right of icon
+        let y = iconBounds.y;
+
+        // Check right edge clipping
+        if (canvasBounds && x + tooltipWidth > canvasBounds.width) {
+            x = iconBounds.x - tooltipWidth - 10; // Flip to left
+            logger.verbose('Flipping tooltip to left (would clip right edge)');
+        }
+
+        // Check bottom edge clipping
+        if (canvasBounds && y + tooltipHeight > canvasBounds.height) {
+            y = Math.max(10, canvasBounds.height - tooltipHeight - 10);
+            logger.verbose('Adjusting tooltip Y position (would clip bottom)');
+        }
+
+        logger.verbose(`calculateTooltipPosition - result: x=${x}, y=${y}`);
+
+        return { x, y };
+    }
+
+    draw(ctx, canvasBounds) {
+        logger.verbose(`TooltipManager.draw() called - hasActiveTooltip: ${!!this.activeTooltip}, showInfoIcons: ${this.config.showInfoIcons}`);
+
+        if (!this.activeTooltip || !this.config.showInfoIcons) return;
+
+        this.updateHover();
+
+        const tooltip = this.activeTooltip;
+        const pos = tooltip.position;
+
+        logger.verbose(`Tooltip position:`, pos, `quickShown: ${this.quickShown}, fullShown: ${this.fullShown}`);
+        logger.verbose(`Tooltip content keys:`, Object.keys(tooltip.content));
+
+        // Determine which content to show
+        let content = '';
+        if (this.fullShown && tooltip.content.full) {
+            content = tooltip.content.full;
+            logger.verbose('Using full tooltip content');
+        } else if (this.quickShown && tooltip.content.quick) {
+            content = tooltip.content.quick;
+            logger.verbose('Using quick tooltip content');
+        }
+
+        if (!content) {
+            logger.verbose('No content to show - returning early');
+            return;
+        }
+
+        logger.verbose(`Drawing tooltip with content: ${content.substring(0, 50)}...`);
+
+        // Draw tooltip
+        const padding = 12;
+        const lineHeight = 16;
+        const maxWidth = 280; // Reduced from 300 for better text wrapping with padding
+
+        // Wrap text
+        const lines = this.wrapText(ctx, content, maxWidth - padding * 2);
+        const tooltipHeight = lines.length * lineHeight + padding * 2;
+
+        logger.verbose(`About to draw tooltip rect at pos: {x: ${pos.x}, y: ${pos.y}}, size: {w: ${maxWidth}, h: ${tooltipHeight}}`);
+        logger.verbose(`Icon bounds:`, tooltip.bounds);
+        logger.verbose(`Current transform:`, ctx.getTransform());
+
+        ctx.save();
+
+        // Background with border
+        ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        // Use roundRect if available, otherwise regular rect
+        if (ctx.roundRect) {
+            ctx.roundRect(pos.x, pos.y, maxWidth, tooltipHeight, 4);
+        } else {
+            ctx.rect(pos.x, pos.y, maxWidth, tooltipHeight);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        logger.verbose('Tooltip rect drawn (fill and stroke completed)');
+
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px sans-serif';
+        ctx.textBaseline = 'top';
+
+        lines.forEach((line, i) => {
+            ctx.fillText(line, pos.x + padding, pos.y + padding + i * lineHeight);
+        });
+
+        // Doc link indicator (if full tooltip and has docsUrl)
+        if (this.fullShown && tooltip.content.docsUrl) {
+            const linkY = pos.y + tooltipHeight - padding - lineHeight;
+            ctx.fillStyle = '#4CAF50';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.fillText('Click icon for full docs →', pos.x + padding, linkY);
+        }
+
+        ctx.restore();
+    }
+
+    drawAtScreenCoords(ctx, screenBounds, canvasBounds) {
+        // Draw tooltip at graph level using screen coordinates
+        // Called from app.canvas.onDrawForeground with identity transform
+        logger.verbose(`drawAtScreenCoords() called - screenBounds:`, screenBounds);
+
+        if (!this.activeTooltip || !this.config.showInfoIcons) return;
+
+        this.updateHover();
+
+        const tooltip = this.activeTooltip;
+
+        logger.verbose(`quickShown: ${this.quickShown}, fullShown: ${this.fullShown}`);
+
+        // Determine which content to show
+        let content = '';
+        if (this.fullShown && tooltip.content.full) {
+            content = tooltip.content.full;
+            logger.verbose('Using full tooltip content');
+        } else if (this.quickShown && tooltip.content.quick) {
+            content = tooltip.content.quick;
+            logger.verbose('Using quick tooltip content');
+        }
+
+        if (!content) {
+            logger.verbose('No content to show - returning early');
+            return;
+        }
+
+        logger.verbose(`Drawing tooltip with content: ${content.substring(0, 50)}...`);
+
+        // Calculate tooltip position in screen space
+        const tooltipWidth = 280;
+        const tooltipHeight = 150; // Will be recalculated after text wrapping
+
+        let x = screenBounds.x + screenBounds.width + 10; // 10px right of icon
+        let y = screenBounds.y;
+
+        // Check right edge clipping
+        if (x + tooltipWidth > canvasBounds.width) {
+            x = screenBounds.x - tooltipWidth - 10; // Flip to left
+            logger.verbose('Flipping tooltip to left (would clip right edge)');
+        }
+
+        // Check bottom edge clipping
+        if (y + tooltipHeight > canvasBounds.height) {
+            y = Math.max(10, canvasBounds.height - tooltipHeight - 10);
+            logger.verbose('Adjusting tooltip Y position (would clip bottom)');
+        }
+
+        logger.verbose(`Tooltip screen position: x=${x}, y=${y}`);
+
+        // Draw tooltip
+        const padding = 12;
+        const lineHeight = 16;
+        const maxWidth = 280;
+
+        // Wrap text
+        const lines = this.wrapText(ctx, content, maxWidth - padding * 2);
+
+        // Calculate height - include extra line for doc link if showing full tooltip with docs
+        const hasDocLink = this.fullShown && tooltip.content.docsUrl;
+        const contentLines = lines.length + (hasDocLink ? 1 : 0);
+        const actualTooltipHeight = contentLines * lineHeight + padding * 2;
+
+        // Recheck bottom clipping with actual height
+        if (y + actualTooltipHeight > canvasBounds.height) {
+            y = Math.max(10, canvasBounds.height - actualTooltipHeight - 10);
+        }
+
+        logger.verbose(`About to draw tooltip rect at screen pos: {x: ${x}, y: ${y}}, size: {w: ${maxWidth}, h: ${actualTooltipHeight}}`);
+
+        ctx.save();
+
+        // Background with border
+        ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (ctx.roundRect) {
+            ctx.roundRect(x, y, maxWidth, actualTooltipHeight, 4);
+        } else {
+            ctx.rect(x, y, maxWidth, actualTooltipHeight);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        logger.verbose('Tooltip rect drawn (fill and stroke completed)');
+
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px sans-serif';
+        ctx.textBaseline = 'top';
+
+        lines.forEach((line, i) => {
+            ctx.fillText(line, x + padding, y + padding + i * lineHeight);
+        });
+
+        // Doc link indicator (if full tooltip and has docsUrl)
+        // Render on the line AFTER the last content line
+        if (hasDocLink) {
+            const linkY = y + padding + lines.length * lineHeight;
+            ctx.fillStyle = '#4CAF50';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.fillText('Click icon for full docs →', x + padding, linkY);
+        }
+
+        ctx.restore();
+    }
+
+    wrapText(ctx, text, maxWidth) {
+        const lines = [];
+        const paragraphs = text.split('\n');
+
+        ctx.font = '12px sans-serif'; // Ensure font is set for measurement
+
+        paragraphs.forEach(paragraph => {
+            if (!paragraph.trim()) {
+                lines.push('');
+                return;
+            }
+
+            const words = paragraph.split(' ');
+            let currentLine = '';
+
+            words.forEach(word => {
+                const testLine = currentLine + (currentLine ? ' ' : '') + word;
+                const metrics = ctx.measureText(testLine);
+
+                if (metrics.width > maxWidth && currentLine) {
+                    lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = testLine;
+                }
+            });
+
+            if (currentLine) {
+                lines.push(currentLine);
+            }
+        });
+
+        return lines;
+    }
+
+    handleClick(tooltipContent) {
+        if (tooltipContent.docsUrl) {
+            window.open(tooltipContent.docsUrl, '_blank');
+            logger.info('Opened docs:', tooltipContent.docsUrl);
+        } else {
+            logger.debug('No docs URL available for this tooltip');
+        }
+    }
+}
+
+/**
+ * Info Icon - Clickable icon that shows tooltips
+ *
+ * Renders ℹ️ icon on canvas with hit area detection.
+ * Integrates with TooltipManager for hover state and tooltip display.
+ *
+ * Usage:
+ * - Add to widget: this.infoIcon = new InfoIcon(TOOLTIP_CONTENT.widget_name)
+ * - Draw: this.infoIcon.draw(ctx, x, y, height, canvasBounds)
+ * - Mouse: if (this.infoIcon.mouse(event, pos, canvasBounds)) return true;
+ */
+class InfoIcon {
+    constructor(tooltipContent) {
+        this.content = tooltipContent;
+        this.hitArea = { x: 0, y: 0, width: 0, height: 0 };
+        this.isHovering = false;
+    }
+
+    draw(ctx, x, y, height, canvasBounds) {
+        if (!tooltipManager.config.showInfoIcons) return;
+
+        const iconSize = 14;
+        const iconX = x; // Use absolute position (widget calculates placement)
+        const iconY = y + (height - iconSize) / 2;
+
+        logger.verbose(`InfoIcon.draw() - x: ${x}, y: ${y}, iconX: ${iconX}, iconY: ${iconY}`);
+
+        ctx.save();
+
+        // Draw circle background
+        ctx.fillStyle = this.isHovering ? 'rgba(76, 175, 80, 0.3)' : 'rgba(76, 175, 80, 0.2)';
+        ctx.beginPath();
+        ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw "i" symbol
+        ctx.fillStyle = this.isHovering ? '#4CAF50' : '#888888';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('i', iconX + iconSize / 2, iconY + iconSize / 2);
+
+        ctx.restore();
+
+        // Update hit area for mouse detection
+        this.hitArea = {
+            x: iconX,
+            y: iconY,
+            width: iconSize,
+            height: iconSize
+        };
+
+        logger.verbose(`InfoIcon hitArea:`, this.hitArea);
+
+        // Note: Tooltip is drawn in onDrawForeground (after all widgets) for proper z-order
+    }
+
+    mouse(event, pos, canvasBounds, nodePos) {
+        if (!tooltipManager.config.showInfoIcons) return false;
+
+        const inBounds = this.isInBounds(pos, this.hitArea);
+
+        logger.verbose(`InfoIcon.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}], hitArea:`, this.hitArea, `inBounds: ${inBounds}`);
+
+        if (event.type === 'pointermove') {
+            if (inBounds && !this.isHovering) {
+                // Start hover (convert node-local to canvas-global coords)
+                this.isHovering = true;
+                tooltipManager.startHover(this.content, this.hitArea, canvasBounds, nodePos);
+                return true;
+            } else if (!inBounds && this.isHovering) {
+                // End hover
+                this.isHovering = false;
+                tooltipManager.endHover();
+                return false;
+            }
+        }
+
+        if (event.type === 'pointerdown' && inBounds) {
+            // Click to open docs
+            tooltipManager.handleClick(this.content);
+            return true;
+        }
+
+        return inBounds;
+    }
+
+    isInBounds(pos, bounds) {
+        return pos[0] >= bounds.x &&
+               pos[0] <= bounds.x + bounds.width &&
+               pos[1] >= bounds.y &&
+               pos[1] <= bounds.y + bounds.height;
+    }
+}
+
+// Singleton instance
+const tooltipManager = new TooltipManager();
 
 /**
  * Shared utilities for image dimension extraction
@@ -1392,6 +1851,9 @@ class ImageModeWidget {
             toggle: { x: 0, y: 0, width: 0, height: 0 },
             modeSelector: { x: 0, y: 0, width: 0, height: 0 }
         };
+
+        // Info icon for tooltip
+        this.infoIcon = new InfoIcon(TOOLTIP_CONTENT.image_mode);
     }
 
     /**
@@ -1425,11 +1887,17 @@ class ImageModeWidget {
         posX += toggleWidth + innerMargin * 2;
 
         // Draw label (MIDDLE) - "USE IMAGE?"
+        const labelText = "USE IMAGE?";
         ctx.fillStyle = this.value.on ? "#ffffff" : "#888888";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.font = "13px sans-serif";
-        ctx.fillText("USE IMAGE?", posX, midY);
+
+        // Measure text width to position icon correctly
+        const labelTextWidth = ctx.measureText(labelText).width;
+        const labelStartX = posX;
+
+        ctx.fillText(labelText, labelStartX, midY);
 
         // Calculate mode selector position (RIGHT side)
         const modeWidth = 100;  // Fixed width for mode selector
@@ -1459,6 +1927,16 @@ class ImageModeWidget {
         } else {
             this.hitAreas.modeSelector = { x: 0, y: 0, width: 0, height: 0 };
         }
+
+        // Draw info icon positioned dynamically after label text
+        const iconSize = 14;
+        const iconMarginFromText = 6; // Space after "USE IMAGE?" text
+        const iconX = labelStartX + labelTextWidth + iconMarginFromText; // Position AFTER text
+
+        logger.verbose(`ImageModeWidget.draw() - width: ${width}, labelEnd: ${labelStartX + labelTextWidth}, iconX: ${iconX}, modeX: ${modeX}, y: ${y}`);
+
+        const canvasBounds = { width: node.size[0], height: node.size[1] };
+        this.infoIcon.draw(ctx, iconX, y, height, canvasBounds);
 
         ctx.restore();
     }
@@ -1498,6 +1976,16 @@ class ImageModeWidget {
      * - Block mode selector entirely
      */
     mouse(event, pos, node) {
+        logger.verbose(`ImageModeWidget.mouse() - event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
+
+        // Check info icon first (before other interactions)
+        // Pass node position for coordinate conversion (node-local → canvas-global)
+        const canvasBounds = { width: node.size[0], height: node.size[1] };
+        if (this.infoIcon.mouse(event, pos, canvasBounds, node.pos)) {
+            node.setDirtyCanvas(true);
+            return true; // Icon handled the event
+        }
+
         if (event.type === "pointerdown") {
             logger.debug(`ImageModeWidget.mouse() - imageDisconnected: ${this.imageDisconnected}, value.on: ${this.value.on}, pos: [${pos[0]}, ${pos[1]}]`);
             logger.debug('Toggle hit area:', this.hitAreas.toggle);
@@ -2160,7 +2648,136 @@ app.registerExtension({
                     }
                 }
             };
+
+            // No node-level rendering needed - tooltips draw at graph level for proper z-order
+
+            // WORKAROUND: Manually route mouse events to custom widgets
+            // ComfyUI's addCustomWidget doesn't seem to be routing pointermove events correctly
+            const onMouseMove = nodeType.prototype.onMouseMove;
+            nodeType.prototype.onMouseMove = function(e, localPos, graphCanvas) {
+                // Call original handler first
+                if (onMouseMove) {
+                    onMouseMove.apply(this, arguments);
+                }
+
+                // Manually route to custom widgets that have mouse() methods
+                if (this.widgets) {
+                    for (const widget of this.widgets) {
+                        if (widget.type === "custom" && typeof widget.mouse === "function") {
+                            // Convert event to pointermove format
+                            const event = { type: "pointermove" };
+                            // Call widget's mouse handler with node-local coordinates
+                            if (widget.mouse(event, localPos, this)) {
+                                // Widget handled the event, mark canvas as dirty to trigger redraw
+                                this.setDirtyCanvas(true);
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            };
+
+            // WORKAROUND: Manually route mouse down events to custom widgets
+            const onMouseDown = nodeType.prototype.onMouseDown;
+            nodeType.prototype.onMouseDown = function(e, localPos, graphCanvas) {
+                // Call original handler first
+                if (onMouseDown) {
+                    const result = onMouseDown.apply(this, arguments);
+                    if (result) return result;
+                }
+
+                // Manually route to custom widgets that have mouse() methods
+                if (this.widgets) {
+                    for (const widget of this.widgets) {
+                        if (widget.type === "custom" && typeof widget.mouse === "function") {
+                            // Convert event to pointerdown format
+                            const event = { type: "pointerdown" };
+                            // Call widget's mouse handler with node-local coordinates
+                            if (widget.mouse(event, localPos, this)) {
+                                // Widget handled the event, mark canvas as dirty to trigger redraw
+                                this.setDirtyCanvas(true);
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            };
+
         }
+    },
+
+    // Hook into global canvas rendering to draw tooltips on top of EVERYTHING
+    async setup() {
+        logger.verbose('setup() called - hooking app.canvas.onDrawForeground');
+
+        const originalDrawForeground = app.canvas.onDrawForeground;
+
+        app.canvas.onDrawForeground = function(ctx) {
+            if (originalDrawForeground) {
+                originalDrawForeground.call(this, ctx);
+            }
+
+            // Draw tooltips at graph level with SCREEN COORDINATES (proper z-order)
+            // The context has graph-space transform applied, so we need to:
+            // 1. Get current transform to convert icon bounds to screen space
+            // 2. Reset transform to identity (screen space)
+            // 3. Draw tooltip at screen coordinates
+            // 4. Restore original transform
+
+            if (!tooltipManager.activeTooltip) return;
+
+            // Get current transform (graph to screen)
+            const transform = ctx.getTransform();
+
+            // Convert icon bounds from canvas-global to screen coordinates
+            const bounds = tooltipManager.activeTooltip.bounds;
+            const screenBounds = {
+                x: bounds.x * transform.a + bounds.y * transform.c + transform.e,
+                y: bounds.x * transform.b + bounds.y * transform.d + transform.f,
+                width: bounds.width * transform.a,
+                height: bounds.height * transform.d
+            };
+
+            logger.verbose('Transform:', transform);
+            logger.verbose('Canvas-global bounds:', bounds);
+            logger.verbose('Screen bounds:', screenBounds);
+
+            // Get device pixel ratio for proper scaling
+            const dpr = window.devicePixelRatio || 1;
+            logger.verbose('Device pixel ratio:', dpr);
+
+            // Save current state and reset to device-pixel-ratio transform
+            ctx.save();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            // Calculate canvas bounds in CSS pixels
+            const canvasBounds = {
+                width: this.canvas ? this.canvas.width / dpr : 2000,
+                height: this.canvas ? this.canvas.height / dpr : 2000
+            };
+
+            // Convert screen bounds from device pixels to CSS pixels
+            const cssBounds = {
+                x: screenBounds.x / dpr,
+                y: screenBounds.y / dpr,
+                width: screenBounds.width / dpr,
+                height: screenBounds.height / dpr
+            };
+
+            logger.verbose('CSS bounds:', cssBounds, 'Canvas bounds (CSS):', canvasBounds);
+
+            // Draw tooltip in CSS pixel space (with DPR transform applied)
+            tooltipManager.drawAtScreenCoords(ctx, cssBounds, canvasBounds);
+
+            // Restore transform
+            ctx.restore();
+        };
+
+        logger.verbose('app.canvas.onDrawForeground hook installed');
     }
 });
 

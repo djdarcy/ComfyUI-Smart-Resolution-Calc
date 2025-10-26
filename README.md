@@ -213,15 +213,20 @@ export COMFY_DEBUG_SMART_RES_CALC=true
 
 **JavaScript Logging** (Browser console F12):
 ```javascript
+// Standard debug logging
 localStorage.setItem('DEBUG_SMART_RES_CALC', 'true');
+
+// Verbose logging (includes coordinates, hit areas, detailed state)
+localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true');
 ```
 
-Debug logs show widget data flow, calculation steps, and final results.
+Debug logs show widget data flow, calculation steps, and final results. Verbose mode adds detailed coordinate logging for tooltip positioning and widget layout debugging.
 
 **Disable**:
 ```bash
 set COMFY_DEBUG_SMART_RES_CALC=false
 localStorage.removeItem('DEBUG_SMART_RES_CALC');
+localStorage.removeItem('VERBOSE_SMART_RES_CALC');
 ```
 
 ## Documentation
