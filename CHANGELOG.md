@@ -8,8 +8,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased - 0.2.0-beta]
 
 ### Planned
-- Info icon tooltip system for advanced features
 - Additional testing and polish
+- Shift+Click documentation for native widgets
+
+## [0.2.0-alpha8] - 2025-10-26
+
+### Added
+- **Label-Based Tooltip System**: Info icons positioned on widget labels with quick/full tooltips and external documentation
+- **Tooltip Manager**: Centralized tooltip lifecycle management with dual-delay timing (quick at 250ms, full at 1250ms)
+- **InfoIcon Component**: Reusable info icon with hit detection, hover state, and click-to-docs functionality
+- **Composite Widget Support**: ImageModeWidget with toggle + mode selector + tooltip (complex layout)
+- **Native Widget Tooltips**: Tooltip support for ComfyUI native widgets (aspect_ratio, divisible_by, custom_aspect_ratio)
+- **Shift+Click Documentation**: Quick tooltip on hover, full tooltip after delay, Shift+Click opens external docs (USE IMAGE widget)
+- **Performance Optimized**: Hot-path logging removed, efficient hit detection, minimal redraw overhead
+
+### Technical (Frontend)
+- **TooltipManager** (`web/smart_resolution_calc.js` lines 183-278):
+  - Global singleton pattern for lifecycle management
+  - Dual-delay system: quick (250ms), full (1250ms + 750ms fade-in)
+  - Reset on mouse leave, Shift+Click handling
+  - Clean state management (activeTooltip, quickShown, fullShown)
+- **InfoIcon** (`web/smart_resolution_calc.js` lines 280-514):
+  - Label-relative positioning (icon at label end)
+  - Hit area detection with padding (15px × widgetHeight)
+  - Three states: normal, hover (blue #4a7a9a), docs available (cursor:pointer)
+  - External docs handling via `window.open(docsUrl)`
+- **Tooltip Content** (`web/tooltip_content.js`):
+  - Centralized content definitions (quick, full, docsUrl, hoverDelay)
+  - Six widgets configured: image_mode, megapixel, divisible_by, custom_aspect_ratio, scale, aspect_ratio
+  - Prioritized by user confusion potential (high/medium/low)
+- **Native Widget Integration** (`web/smart_resolution_calc.js` lines 2555-2590):
+  - `wrapWidgetWithTooltip()` method for native widgets
+  - ComfyUI drawWidgets() override to set hit areas after native draw
+  - Hit area calculated from label position + label width
+  - Tooltip draw/mouse delegated to InfoIcon
+- **ImageModeWidget Integration** (lines 1918-2035):
+  - Composite widget with InfoIcon positioned at label
+  - Toggle + mode selector + tooltip in single widget
+  - Hit area set during draw, tooltip handled in mouse method
+- **Widget Measurements**:
+  - Label width via `ctx.measureText(labelText).width`
+  - Icon positioned at label end (labelX + labelWidth)
+  - Hit area: 15px left of label start to end of label text
+  - Widget height: `LiteGraph.NODE_WIDGET_HEIGHT` (28px standard)
+
+### Tooltip Content Added
+1. **USE IMAGE?** (image_mode) - High priority
+   - Quick: "Extract dimensions from image. AR Only: ratio | Exact Dims: exact"
+   - Full: Explains two modes, asymmetric behavior, snapshot workflow
+   - Docs: `/docs/image-input.md` (Shift+Click functional)
+2. **MEGAPIXEL** (megapixel) - High priority
+   - Quick: "Target resolution in millions of pixels (1MP = 1024×1024)"
+   - Full: Explains MP calculation, future features
+3. **divisible_by** - High priority
+   - Quick: "Ensures dimensions divisible by N for AI model compatibility"
+   - Full: Explains why needed, model requirements, recommended values
+4. **custom_aspect_ratio** - Medium priority
+   - Quick: "Format: W:H (fractional OK: '1:2.5', '16:9', '1.85:1')"
+   - Full: Multiple format examples, cinema ratios
+5. **SCALE** - Medium priority
+   - Quick: "Multiplies base dimensions (applies to image input + manual)"
+   - Full: Explains interaction with image modes, asymmetric slider
+6. **aspect_ratio** - Low priority
+   - Quick: "Aspect ratio for calculations (ignored if both W+H set)"
+   - Full: Priority rules, preset vs custom ratios
+
+### Benefits
+- ✅ **Self-Documenting UI**: Users discover features via tooltips without reading full docs
+- ✅ **Progressive Disclosure**: Quick hint → full explanation → external docs (three levels)
+- ✅ **Label Integration**: Icons positioned naturally at widget labels (not separate widgets)
+- ✅ **Performance**: Hot-path logging removed (~10 verbose logs), minimal redraw overhead
+- ✅ **Extensible**: Easy to add tooltips to new widgets via TOOLTIP_CONTENT
+- ✅ **Native Widget Support**: Works with both custom and ComfyUI native widgets
+
+### Documentation
+- Updated `docs/image-input.md` to reflect current ImageModeWidget implementation
+- Documented composite widget structure (toggle + mode selector)
+- Added Shift+Click functionality documentation
+
+### Performance Improvements
+- Removed verbose logging from tooltip hot paths (draw/mouse methods that fire every frame)
+- Eliminated ~10 debug logs from TooltipManager, ImageModeWidget, CopyImageButton
+- Kept one-time event logs (node creation, toggle blocking)
+
+### Known Limitations
+- Shift+Click only functional for USE_IMAGE widget (others have `docsUrl: null`)
+- Native widget Shift+Click planned for future release (requires ComfyUI framework changes)
+- Single-level tooltip nesting (no tooltip-within-tooltip)
 
 ## [0.2.0-alpha7] - 2025-10-26
 
