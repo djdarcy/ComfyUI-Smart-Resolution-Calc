@@ -73,6 +73,91 @@ class DebugLogger {
 const logger = new DebugLogger('SmartResCalc');
 
 /**
+ * Shared utilities for image dimension extraction
+ * Used by both CopyImageButton and ScaleWidget to avoid code duplication
+ */
+const ImageDimensionUtils = {
+    /**
+     * Extract file path from LoadImage node
+     * Returns null if not a LoadImage node or path not found
+     */
+    getImageFilePath(sourceNode) {
+        if (!sourceNode) return null;
+
+        // Check if this is a LoadImage node
+        if (sourceNode.type === "LoadImage" || sourceNode.title?.includes("Load Image")) {
+            // Try to get the image filename from the widget
+            const imageWidget = sourceNode.widgets?.find(w => w.name === "image");
+            if (imageWidget && imageWidget.value) {
+                logger.verbose(`Found LoadImage with filename: ${imageWidget.value}`);
+                return imageWidget.value;
+            }
+        }
+
+        logger.verbose(`Source node type: ${sourceNode.type} - not a LoadImage node`);
+        return null;
+    },
+
+    /**
+     * Fetch dimensions from server endpoint
+     * Returns {width, height, success} or null on failure
+     */
+    async fetchDimensionsFromServer(imagePath) {
+        try {
+            const response = await fetch('/smart-resolution/get-dimensions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ image_path: imagePath })
+            });
+
+            if (!response.ok) {
+                logger.verbose(`Server responded with status: ${response.status}`);
+                return null;
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (e) {
+            logger.verbose(`Server request failed: ${e}`);
+            return null;
+        }
+    },
+
+    /**
+     * Parse dimensions from cached info output
+     * Looks for patterns like "From Image (Exact: 1920×1080)" or "From Image (AR: 16:9)"
+     * Returns {width, height, success: true} or null
+     */
+    parseDimensionsFromInfo(node) {
+        // Get the info widget value (last execution output)
+        const infoWidget = node.widgets?.find(w => w.name === "info");
+        if (!infoWidget || !infoWidget.value) {
+            logger.verbose("No info widget or value found for dimension parsing");
+            return null;
+        }
+
+        const infoText = infoWidget.value;
+        logger.verbose(`Parsing info text: ${infoText}`);
+
+        // Pattern: "From Image (Exact: 1920×1080)" or "From Image (AR: 16:9)"
+        // Extract the source dimensions
+        const match = infoText.match(/From Image \((?:Exact|AR): (\d+)×(\d+)\)/);
+        if (match) {
+            return {
+                width: parseInt(match[1]),
+                height: parseInt(match[2]),
+                success: true
+            };
+        }
+
+        logger.verbose("No dimension pattern found in info text");
+        return null;
+    }
+};
+
+/**
  * Custom scale multiplier widget
  * Features:
  * - 1.0x visually centered (asymmetric: 30% for 0-1.0, 70% for 1.0-10.0)
@@ -117,6 +202,11 @@ class ScaleWidget {
             rightStepDown: { x: 0, y: 0, width: 0, height: 0 },
             rightStepUp: { x: 0, y: 0, width: 0, height: 0 }
         };
+
+        // Image dimension cache for tooltip preview
+        // Stores actual image dimensions when USE_IMAGE is enabled
+        this.imageDimensionsCache = null;  // {width, height, timestamp, path}
+        this.fetchingDimensions = false;   // Prevent concurrent fetches
     }
 
     /**
@@ -160,6 +250,16 @@ class ScaleWidget {
      * Calculate preview dimensions for tooltip
      */
     calculatePreview(node) {
+        // Check if we should fetch image dimensions (if USE_IMAGE enabled but cache empty)
+        const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
+        const useImage = imageModeWidget?.value?.on;
+
+        if (useImage && !this.imageDimensionsCache && !this.fetchingDimensions) {
+            // Trigger async fetch (won't block, but will populate cache for next time)
+            logger.verbose('Scale preview: cache empty, triggering dimension fetch');
+            this.refreshImageDimensions(node);
+        }
+
         // Get current dimension values from the node's other widgets
         const mpWidget = node.widgets.find(w => w.name === "dimension_megapixel");
         const widthWidget = node.widgets.find(w => w.name === "dimension_width");
@@ -187,28 +287,44 @@ class ScaleWidget {
         const useWidth = widthWidget.value.on;
         const useHeight = heightWidget.value.on;
 
-        // Calculate base dimensions with proper aspect ratio handling
-        if (useWidth && useHeight) {
-            // Both W+H specified - use as-is
-            baseW = widthWidget.value.value;
-            baseH = heightWidget.value.value;
-        } else if (useWidth) {
-            // Width specified - calculate height from aspect ratio
-            baseW = widthWidget.value.value;
-            baseH = Math.round(baseW / aspectRatio);
-        } else if (useHeight) {
-            // Height specified - calculate width from aspect ratio
-            baseH = heightWidget.value.value;
-            baseW = Math.round(baseH * aspectRatio);
-        } else if (useMp) {
-            // Megapixel mode - calculate dimensions from MP and aspect ratio
-            const targetMp = mpWidget.value.value * 1_000_000;
-            baseH = Math.sqrt(targetMp / aspectRatio);
-            baseW = baseH * aspectRatio;
+        // Check if we should use cached image dimensions
+        const imageModeWidgetForCache = node.widgets?.find(w => w.name === "image_mode");
+        const useImageForCache = imageModeWidgetForCache?.value?.on;
+
+        logger.verbose(`[ScaleWidget] calculatePreview: USE_IMAGE=${useImageForCache}, cache=${this.imageDimensionsCache ? 'populated' : 'empty'}`);
+
+        if (useImageForCache && this.imageDimensionsCache) {
+            // Use cached image dimensions as base (override widget calculations)
+            baseW = this.imageDimensionsCache.width;
+            baseH = this.imageDimensionsCache.height;
+            logger.info(`✓ Scale preview using cached image dimensions: ${baseW}×${baseH}`);
         } else {
-            // Default mode - use 1920x1080
-            baseW = 1920;
-            baseH = 1080;
+            if (useImageForCache) {
+                logger.debug(`[ScaleWidget] Cache empty, falling back to widget-based calculation`);
+            }
+            // Calculate base dimensions with proper aspect ratio handling (existing logic)
+            if (useWidth && useHeight) {
+                // Both W+H specified - use as-is
+                baseW = widthWidget.value.value;
+                baseH = heightWidget.value.value;
+            } else if (useWidth) {
+                // Width specified - calculate height from aspect ratio
+                baseW = widthWidget.value.value;
+                baseH = Math.round(baseW / aspectRatio);
+            } else if (useHeight) {
+                // Height specified - calculate width from aspect ratio
+                baseH = heightWidget.value.value;
+                baseW = Math.round(baseH * aspectRatio);
+            } else if (useMp) {
+                // Megapixel mode - calculate dimensions from MP and aspect ratio
+                const targetMp = mpWidget.value.value * 1_000_000;
+                baseH = Math.sqrt(targetMp / aspectRatio);
+                baseW = baseH * aspectRatio;
+            } else {
+                // Default mode - use 1920x1080
+                baseW = 1920;
+                baseH = 1080;
+            }
         }
 
         baseMp = (baseW * baseH) / 1_000_000;
@@ -235,6 +351,99 @@ class ScaleWidget {
             finalW, finalH, finalMp,
             divisor
         };
+    }
+
+    /**
+     * Refresh image dimensions cache using hybrid B+C strategy
+     * Called when image connected/disconnected or USE_IMAGE toggled
+     */
+    async refreshImageDimensions(node) {
+        // Check if USE_IMAGE is enabled
+        const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
+        if (!imageModeWidget?.value?.on) {
+            this.imageDimensionsCache = null;
+            logger.verbose('USE_IMAGE disabled, clearing dimension cache');
+            return;
+        }
+
+        // Get connected image node
+        const imageInput = node.inputs?.find(inp => inp.name === "image");
+        const link = imageInput?.link;
+        if (!link) {
+            this.imageDimensionsCache = null;
+            logger.verbose('No image connected, clearing dimension cache');
+            return;
+        }
+
+        // Get source node from link
+        const linkInfo = node.graph.links[link];
+        const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
+        if (!sourceNode) {
+            this.imageDimensionsCache = null;
+            logger.verbose('Source node not found, clearing dimension cache');
+            return;
+        }
+
+        // Check cache validity (same image path)
+        const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
+        if (this.imageDimensionsCache?.path === filePath && filePath) {
+            logger.verbose(`Using cached dimensions for ${filePath}`);
+            return; // Cache still valid
+        }
+
+        // Prevent concurrent fetches
+        if (this.fetchingDimensions) {
+            logger.verbose('Already fetching dimensions, skipping');
+            return;
+        }
+
+        // Fetch using hybrid strategy
+        this.fetchingDimensions = true;
+        try {
+            // Tier 1: Server endpoint (immediate for LoadImage nodes)
+            if (filePath) {
+                logger.debug(`[ScaleWidget] Attempting server endpoint for: ${filePath}`);
+                const dims = await ImageDimensionUtils.fetchDimensionsFromServer(filePath);
+                logger.debug(`[ScaleWidget] Server response:`, dims);
+                if (dims?.success) {
+                    this.imageDimensionsCache = {
+                        width: dims.width,
+                        height: dims.height,
+                        timestamp: Date.now(),
+                        path: filePath
+                    };
+                    logger.info(`✓ Cached image dimensions from server: ${dims.width}×${dims.height}`);
+                    node.setDirtyCanvas(true, true);
+                    return;
+                }
+                logger.debug('[ScaleWidget] Server endpoint returned no data or failed');
+            } else {
+                logger.debug('[ScaleWidget] No file path found (not a LoadImage node?)');
+            }
+
+            // Tier 2: Info parsing (cached execution output)
+            logger.verbose('Attempting info parsing for cached dimensions');
+            const cachedDims = ImageDimensionUtils.parseDimensionsFromInfo(node);
+            if (cachedDims) {
+                this.imageDimensionsCache = {
+                    width: cachedDims.width,
+                    height: cachedDims.height,
+                    timestamp: Date.now(),
+                    path: filePath
+                };
+                logger.debug(`✓ Cached image dimensions from info: ${cachedDims.width}×${cachedDims.height}`);
+                node.setDirtyCanvas(true, true);
+                return;
+            }
+            logger.verbose('Info parsing found no dimensions');
+
+            // Tier 3: Clear cache (will fallback to widget values in calculatePreview)
+            logger.verbose('No dimensions available from any source, clearing cache');
+            this.imageDimensionsCache = null;
+
+        } finally {
+            this.fetchingDimensions = false;
+        }
     }
 
     /**
@@ -1207,6 +1416,23 @@ class ImageModeWidget {
 
                 this.value.on = newState;
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
+
+                // Trigger scale dimension refresh when USE_IMAGE is toggled
+                const scaleWidget = node.widgets?.find(w => w.name === "scale");
+                if (scaleWidget?.refreshImageDimensions) {
+                    if (newState) {
+                        // Toggled ON - fetch image dimensions
+                        logger.info('[Toggle] USE_IMAGE enabled, triggering scale dimension refresh');
+                        scaleWidget.refreshImageDimensions(node);
+                    } else {
+                        // Toggled OFF - clear cache
+                        scaleWidget.imageDimensionsCache = null;
+                        logger.info('[Toggle] USE_IMAGE disabled, cleared scale dimension cache');
+                    }
+                } else {
+                    logger.debug('[Toggle] No scale widget or refresh method found');
+                }
+
                 node.setDirtyCanvas(true);
                 return true;
             }
@@ -1465,88 +1691,24 @@ class CopyImageButton {
     }
 
     /**
-     * Extract file path from LoadImage node
-     * Returns null if not a LoadImage node or path not found
+     * Extract file path from LoadImage node (delegates to shared utils)
      */
     getImageFilePath(sourceNode) {
-        if (!sourceNode) return null;
-
-        // Check if this is a LoadImage node
-        if (sourceNode.type === "LoadImage" || sourceNode.title?.includes("Load Image")) {
-            // Try to get the image filename from the widget
-            const imageWidget = sourceNode.widgets?.find(w => w.name === "image");
-            if (imageWidget && imageWidget.value) {
-                logger.debug(`Found LoadImage with filename: ${imageWidget.value}`);
-                return imageWidget.value;
-            }
-        }
-
-        logger.debug(`Source node type: ${sourceNode.type} - not a LoadImage node`);
-        return null;
+        return ImageDimensionUtils.getImageFilePath(sourceNode);
     }
 
     /**
-     * Fetch dimensions from server endpoint
-     * Returns {width, height, success} or null on failure
+     * Fetch dimensions from server endpoint (delegates to shared utils)
      */
     async fetchDimensionsFromServer(imagePath) {
-        try {
-            const response = await fetch('/smart-resolution/get-dimensions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ image_path: imagePath })
-            });
-
-            if (!response.ok) {
-                logger.debug(`Server responded with status: ${response.status}`);
-                return null;
-            }
-
-            const data = await response.json();
-            return data;
-        } catch (e) {
-            logger.error(`Server request failed: ${e}`);
-            return null;
-        }
+        return await ImageDimensionUtils.fetchDimensionsFromServer(imagePath);
     }
 
     /**
-     * Parse dimensions from cached info output
-     * Looks for patterns like "From Image (Exact: 1920×1080)" or "From Image (AR: 16:9, Source: 1920×1080)"
+     * Parse dimensions from cached info output (delegates to shared utils)
      */
     parseDimensionsFromInfo(node) {
-        // Get the info widget value (last execution output)
-        const infoWidget = node.widgets?.find(w => w.name === "info");
-        if (!infoWidget || !infoWidget.value) {
-            logger.debug("No info widget or value found");
-            return null;
-        }
-
-        const infoText = infoWidget.value;
-        logger.debug(`Parsing info text: ${infoText}`);
-
-        // Pattern 1: "From Image (Exact: 1920×1080)"
-        const exactMatch = infoText.match(/From Image \(Exact: (\d+)×(\d+)\)/);
-        if (exactMatch) {
-            return {
-                width: parseInt(exactMatch[1]),
-                height: parseInt(exactMatch[2])
-            };
-        }
-
-        // Pattern 2: "From Image (AR: 16:9, Source: 1920×1080)"
-        const arMatch = infoText.match(/From Image \(AR: [^,]+, Source: (\d+)×(\d+)\)/);
-        if (arMatch) {
-            return {
-                width: parseInt(arMatch[1]),
-                height: parseInt(arMatch[2])
-            };
-        }
-
-        logger.debug("No dimension patterns found in info text");
-        return null;
+        return ImageDimensionUtils.parseDimensionsFromInfo(node);
     }
 
     /**
@@ -1823,13 +1985,22 @@ app.registerExtension({
                     const input = this.inputs[index];
 
                     if (input.name === "image") {
-                        // Find the ImageModeWidget
+                        // Find the ImageModeWidget and ScaleWidget
                         const imageModeWidget = this.widgets?.find(w => w.name === "image_mode");
+                        const scaleWidget = this.widgets?.find(w => w.name === "scale");
 
                         if (connected) {
                             // Mark image as connected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
                                 imageModeWidget.imageDisconnected = false;
+                            }
+
+                            // Trigger dimension cache refresh for scale tooltip
+                            if (scaleWidget && scaleWidget.refreshImageDimensions) {
+                                logger.info('[Connection] Image connected, triggering scale dimension refresh');
+                                scaleWidget.refreshImageDimensions(this);
+                            } else {
+                                logger.debug('[Connection] No scale widget or refresh method found');
                             }
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
@@ -1839,7 +2010,13 @@ app.registerExtension({
                                 imageModeWidget.imageDisconnected = true;
                             }
 
-                            logger.debug('Image input disconnected - USE_IMAGE asymmetric toggle active (can turn OFF, cannot turn ON)');
+                            // Clear dimension cache when image disconnected
+                            if (scaleWidget) {
+                                scaleWidget.imageDimensionsCache = null;
+                                logger.info('[Connection] Image disconnected, cleared scale dimension cache');
+                            }
+
+                            logger.debug('Image input disconnected - USE_IMAGE asymmetric toggle active');
                         }
 
                         // Trigger canvas redraw to update disabled state visually

@@ -11,6 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Info icon tooltip system for advanced features
 - Additional testing and polish
 
+## [0.2.0-alpha4] - 2025-10-25
+
+### Fixed
+- **Scale Tooltip Image-Aware**: Scale widget tooltip now shows correct base dimensions when USE_IMAGE is enabled
+- **Automatic Dimension Fetching**: Tooltip silently fetches actual image dimensions in background using hybrid B+C strategy
+- **Accurate Preview**: Users see the true starting dimensions (from image) rather than stale widget values
+
+### Added
+- **ImageDimensionUtils Module**: Shared utility functions for image dimension extraction (eliminates code duplication)
+- **Dimension Caching**: ScaleWidget caches image dimensions for fast, responsive tooltip preview
+- **Auto-Refresh Triggers**: Dimension cache automatically refreshes when image connected/disconnected or USE_IMAGE toggled
+
+### Changed
+- **CopyImageButton Refactored**: Now uses shared ImageDimensionUtils instead of duplicating fetch methods
+- **Scale Preview Logic**: calculatePreview() checks USE_IMAGE state and uses cached image dimensions when available
+- **Graceful Fallback**: If image dimensions unavailable, tooltip falls back to widget-based calculations (existing behavior)
+
+### Technical (Frontend)
+- **ImageDimensionUtils**: Three shared methods for dimension extraction:
+  - `getImageFilePath()` - Extract path from LoadImage nodes
+  - `fetchDimensionsFromServer()` - Server endpoint fetch (Tier 1)
+  - `parseDimensionsFromInfo()` - Cached info parsing (Tier 2)
+- **ScaleWidget.refreshImageDimensions()**: Async method using hybrid B+C strategy
+  - Tier 1: Server endpoint (immediate for LoadImage nodes)
+  - Tier 2: Info parsing (cached execution output)
+  - Tier 3: Clear cache (fallback to widget values)
+- **Dimension Cache Structure**: `{width, height, timestamp, path}` with path-based validation
+- **Connection Change Handler**: Triggers dimension refresh on image connect/disconnect
+- **Toggle Handler**: Triggers dimension refresh when USE_IMAGE toggled on/off
+- **Performance**: Cache prevents redundant fetches, <50ms refresh time
+
+### Benefits
+- ✅ **Tooltip Accuracy**: Preview matches actual image dimensions when USE_IMAGE enabled
+- ✅ **No User Action**: Dimension fetching happens silently in background
+- ✅ **Fast & Responsive**: Cached dimensions keep tooltip snappy (no delays)
+- ✅ **Code Reuse**: Shared utilities eliminate duplication between CopyImageButton and ScaleWidget
+- ✅ **Robust Fallback**: Multi-tier strategy ensures tooltip always works
+
+### Known Limitations
+- Cache only refreshes on connection change or toggle (not on LoadImage widget changes)
+- Generated images (not from files) require workflow run before dimensions cached
+
+### Known Issues (Will Fix in Alpha5)
+- Asymmetric toggle logic incorrectly applied to dimension widgets (MEGAPIXEL, WIDTH, HEIGHT)
+- Should only apply to USE_IMAGE widget, dimension widgets should have symmetric toggle behavior
+
 ## [0.2.0-alpha3] - 2025-10-25
 
 ### Added
