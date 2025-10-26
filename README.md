@@ -18,6 +18,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 ## Features
 
 - **Image dimension extraction** - Connect images to auto-extract aspect ratio or exact dimensions ([detailed guide](docs/image-input.md))
+- **Interactive tooltips** - Hover over widget labels for quick help, extended explanations, and links to documentation
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
 - **Compact custom widgets** - rgthree-style controls with inline toggles
