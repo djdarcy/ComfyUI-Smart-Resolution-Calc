@@ -10,7 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Info icon tooltip system for advanced features
 - Additional testing and polish
-- Fix asymmetric toggle logic incorrectly applied to dimension widgets (deferred from alpha4)
+- Full behavior pattern system (configurable symmetric/asymmetric behavior for widgets)
+
+## [0.2.0-alpha6] - 2025-10-26
+
+### Fixed
+- **DimensionWidget Value Editing**: Values can now be edited when MEGAPIXEL, WIDTH, HEIGHT widgets are toggled OFF
+- **Symmetric Value Behavior**: Clicking grayed-out dimension values opens edit dialog (previously blocked)
+- **Hit Area Registration**: Widget draw() method now sets value edit hit areas even when toggle is OFF
+
+### Behavior Changes
+- **Value Editing** (MEGAPIXEL/WIDTH/HEIGHT): Can edit values regardless of toggle state (symmetric behavior)
+  - Toggle ON: Click value → edit dialog appears ✅
+  - Toggle OFF: Click grayed value → edit dialog appears ✅ (NEW)
+- **Button Visibility**: +/- increment/decrement buttons correctly hidden when toggle OFF (unchanged)
+  - Toggle ON: +/- buttons visible and functional ✅
+  - Toggle OFF: +/- buttons hidden, value still editable ✅
+
+### What This Fixes
+**Problem**: In alpha5 and earlier, dimension values couldn't be edited when toggled OFF
+- User disables WIDTH, clicks "960" → nothing happens (edit blocked)
+- Only workaround: Re-enable WIDTH, edit value, disable WIDTH again
+- Asymmetric behavior forced unnecessary toggle state changes
+
+**Solution**: Set hit areas in draw() method when toggle OFF, allow mouse() to handle clicks
+- User disables WIDTH, clicks "960" → edit dialog appears ✅
+- Value editable regardless of toggle state (symmetric behavior)
+- +/- buttons still correctly hidden when toggle OFF
+
+### Technical (Frontend)
+- **Draw Method** (`web/smart_resolution_calc.js` lines 1112-1125):
+  - Set `hitAreas.valueEdit` when toggle OFF (enables click detection)
+  - Clear `hitAreas.valueDec/Inc` when toggle OFF (prevents invisible button clicks)
+- **Mouse Method** (`web/smart_resolution_calc.js` lines 1221-1226):
+  - Removed `if (this.value.on)` conditional blocking value editing
+  - Changed comment from "Only handle if toggle is on" to "symmetric behavior - always editable"
+
+### Known Limitations
+- Full behavior pattern system not yet implemented (planned for future release)
+- Currently only DimensionWidget has symmetric value editing
+- Future: Configurable toggle/value/button behavior modes per widget type
 
 ## [0.2.0-alpha5] - 2025-10-25
 

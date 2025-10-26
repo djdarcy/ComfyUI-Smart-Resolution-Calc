@@ -1109,12 +1109,19 @@ class DimensionWidget {
         if (this.value.on) {
             this.drawNumberWidget(ctx, numberX, y, numberWidth, height, this.value.on);
         } else {
-            // Draw grayed out value
+            // Draw grayed out value (still clickable to edit - symmetric behavior)
             ctx.fillStyle = "#555555";
             ctx.textAlign = "center";
             ctx.font = "12px monospace";
             const displayValue = this.isInteger ? String(Math.round(this.value.value)) : this.value.value.toFixed(1);
             ctx.fillText(displayValue, numberX + numberWidth / 2, midY);
+
+            // Set hit area for value editing (symmetric behavior - always editable)
+            this.hitAreas.valueEdit = { x: numberX, y: y, width: numberWidth, height: height };
+
+            // Clear +/- button hit areas (buttons not shown when toggle OFF)
+            this.hitAreas.valueDec = { x: 0, y: 0, width: 0, height: 0 };
+            this.hitAreas.valueInc = { x: 0, y: 0, width: 0, height: 0 };
         }
 
         ctx.restore();
@@ -1218,8 +1225,8 @@ class DimensionWidget {
                 return true;
             }
 
-            // Only handle number controls if toggle is on
-            if (this.value.on) {
+            // Value controls (symmetric behavior - always editable)
+            {
                 // Decrement button
                 if (this.isInBounds(pos, this.hitAreas.valueDec)) {
                     this.changeValue(-1, node);
