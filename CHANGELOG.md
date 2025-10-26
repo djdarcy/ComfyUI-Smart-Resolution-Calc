@@ -10,7 +10,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Info icon tooltip system for advanced features
 - Additional testing and polish
-- Full behavior pattern system (configurable symmetric/asymmetric behavior for widgets)
+
+## [0.2.0-alpha7] - 2025-10-26
+
+### Added
+- **Behavior Pattern System**: Configurable widget interaction modes via `ToggleBehavior` and `ValueBehavior` enums
+- **ToggleBehavior Enum**: SYMMETRIC (can toggle both directions freely) / ASYMMETRIC (one direction has constraints)
+- **ValueBehavior Enum**: ALWAYS (values always editable) / CONDITIONAL (values only editable when conditions met)
+- **Explicit Configuration**: Widget behavior now explicitly configured via constructor config parameter
+
+### Changed
+- **DimensionWidget**: Now explicitly configured as `ToggleBehavior.SYMMETRIC` + `ValueBehavior.ALWAYS`
+- **ImageModeWidget**: Now explicitly configured as `ToggleBehavior.ASYMMETRIC` + `ValueBehavior.CONDITIONAL`
+- **Self-Documenting Code**: Behavior intent obvious from configuration (e.g., `valueBehavior: ValueBehavior.ALWAYS`)
+
+### Technical (Frontend)
+- **Behavior Enums** (`web/smart_resolution_calc.js` lines 75-105):
+  - `ToggleBehavior`: Controls when toggle can be enabled/disabled
+  - `ValueBehavior`: Controls when values can be edited
+  - Independent dimensions support all 4 combinations
+- **DimensionWidget** (lines 1081-1299):
+  - Constructor accepts optional `config` parameter with behavior properties
+  - Mouse method checks `valueBehavior` before allowing value editing
+  - Defaults preserve alpha6 behavior (SYMMETRIC toggle + ALWAYS values)
+- **ImageModeWidget** (lines 1365-1568):
+  - Constructor accepts optional `config` parameter with behavior properties
+  - Toggle logic wrapped in `toggleBehavior` check (asymmetric by default)
+  - Mode selector checks `valueBehavior` (conditional by default)
+  - Defaults preserve alpha6 behavior (ASYMMETRIC toggle + CONDITIONAL values)
+
+### Behavior Combinations Supported
+
+All 4 combinations are valid and supported:
+
+1. **Symmetric Toggle + Always Values** (DimensionWidget)
+   - Toggle: Can enable/disable freely
+   - Values: Always editable regardless of toggle state
+
+2. **Asymmetric Toggle + Conditional Values** (ImageModeWidget)
+   - Toggle: Can disable anytime, can only enable when image connected
+   - Values: Only editable when toggle ON and image connected
+
+3. **Asymmetric Toggle + Always Values** (Future use case)
+   - Toggle: Has constraints (e.g., can't enable without connection)
+   - Values: Always editable even when toggle OFF
+
+4. **Symmetric Toggle + Conditional Values** (Future use case)
+   - Toggle: Can enable/disable freely
+   - Values: Only editable when toggle ON
+
+### Benefits
+
+**User Experience**:
+- Behavior is predictable and consistent
+- Alpha6 symmetric value editing preserved for DimensionWidget
+- ImageModeWidget constraints preserved (can't enable without image)
+
+**Developer Experience**:
+- Self-documenting code (intent clear from configuration)
+- Future widgets can choose behavior by passing config object
+- Pattern established for consistent widget development
+- Extensible (can add READONLY or other modes later)
+
+**Terminology**:
+- **SYMMETRIC/ASYMMETRIC** (toggles): Reflects bidirectional nature (both directions free vs one constrained)
+- **ALWAYS/CONDITIONAL** (values): Reflects editing availability (always editable vs conditionally editable)
+- Intuitive terminology matching actual behavior
+
+### Backward Compatibility
+- 100% backward compatible with alpha6
+- All defaults preserve exact current behavior
+- Config parameter optional (defaults handle everything)
+- No breaking changes to existing workflows
 
 ## [0.2.0-alpha6] - 2025-10-26
 

@@ -73,6 +73,38 @@ class DebugLogger {
 const logger = new DebugLogger('SmartResCalc');
 
 /**
+ * Toggle Behavior Modes
+ *
+ * Controls when a toggle can be enabled/disabled.
+ *
+ * - SYMMETRIC: Can toggle both ON→OFF and OFF→ON freely
+ *   Example: DimensionWidget can be enabled/disabled anytime
+ *
+ * - ASYMMETRIC: Can toggle one direction freely, other direction has constraints
+ *   Example: ImageModeWidget can be disabled anytime, but can only be enabled when image connected
+ */
+const ToggleBehavior = {
+    SYMMETRIC: 'symmetric',      // Can toggle both directions freely
+    ASYMMETRIC: 'asymmetric'     // One direction free, other has constraints
+};
+
+/**
+ * Value Behavior Modes
+ *
+ * Controls when widget values can be edited.
+ *
+ * - ALWAYS: Values are always editable regardless of toggle state
+ *   Example: DimensionWidget values can be edited even when toggle is OFF
+ *
+ * - CONDITIONAL: Values only editable when certain conditions met
+ *   Example: ImageModeWidget mode selector only editable when toggle is ON and image connected
+ */
+const ValueBehavior = {
+    ALWAYS: 'always',            // Always editable
+    CONDITIONAL: 'conditional'   // Only editable when conditions met
+};
+
+/**
  * Shared utilities for image dimension extraction
  * Used by both CopyImageButton and ScaleWidget to avoid code duplication
  */
@@ -1046,7 +1078,7 @@ class ScaleWidget {
  * Matches rgthree's Power Lora Loader aesthetic
  */
 class DimensionWidget {
-    constructor(name, defaultValue, isInteger = true) {
+    constructor(name, defaultValue, isInteger = true, config = {}) {
         this.name = name;
         this.type = "custom";
         this.isInteger = isInteger;
@@ -1054,6 +1086,12 @@ class DimensionWidget {
             on: false,
             value: defaultValue
         };
+
+        // Behavior configuration
+        // - Toggle Behavior: Controls when toggle can be enabled/disabled
+        // - Value Behavior: Controls when values can be edited
+        this.toggleBehavior = config.toggleBehavior ?? ToggleBehavior.SYMMETRIC;
+        this.valueBehavior = config.valueBehavior ?? ValueBehavior.ALWAYS;
 
         // Mouse state
         this.mouseDowned = null;
@@ -1225,8 +1263,13 @@ class DimensionWidget {
                 return true;
             }
 
-            // Value controls (symmetric behavior - always editable)
-            {
+            // Value editing - check behavior mode
+            // ALWAYS: Values editable regardless of toggle state (default)
+            // CONDITIONAL: Values only editable when toggle ON
+            const allowValueEdit = this.value.on ||
+                                   (this.valueBehavior === ValueBehavior.ALWAYS);
+
+            if (allowValueEdit) {
                 // Decrement button
                 if (this.isInBounds(pos, this.hitAreas.valueDec)) {
                     this.changeValue(-1, node);
@@ -1319,13 +1362,19 @@ class DimensionWidget {
  * Answers the question "USE IMAGE?" with ON/OFF + AR Only/Exact Dims
  */
 class ImageModeWidget {
-    constructor(name = "image_mode") {
+    constructor(name = "image_mode", config = {}) {
         this.name = name;
         this.type = "custom";
         this.value = {
             on: true,   // Default: enabled
             value: 0    // 0 = AR Only, 1 = Exact Dims
         };
+
+        // Behavior configuration (both default to asymmetric/conditional for USE_IMAGE)
+        // - Toggle: Can't enable without image (asymmetric)
+        // - Values (mode): Can't change when toggle OFF or image disconnected (conditional)
+        this.toggleBehavior = config.toggleBehavior ?? ToggleBehavior.ASYMMETRIC;
+        this.valueBehavior = config.valueBehavior ?? ValueBehavior.CONDITIONAL;
 
         // Mode labels
         this.modes = ["AR Only", "Exact Dims"];
@@ -1466,13 +1515,17 @@ class ImageModeWidget {
 
                 logger.debug(`Toggle clicked: ${oldState} → ${newState}, imageDisconnected: ${this.imageDisconnected}`);
 
-                // Asymmetric logic when image disconnected:
-                // - Allow ON → OFF (user turning it off is fine)
-                // - Block OFF → ON (can't enable without image)
-                if (this.imageDisconnected && newState === true) {
-                    logger.debug('Image mode toggle blocked: Cannot enable USE_IMAGE without image connected');
-                    return false;
+                // Toggle behavior check (asymmetric by default)
+                if (this.toggleBehavior === ToggleBehavior.ASYMMETRIC) {
+                    // Asymmetric logic when image disconnected:
+                    // - Allow ON → OFF (user turning it off is fine)
+                    // - Block OFF → ON (can't enable without image)
+                    if (this.imageDisconnected && newState === true) {
+                        logger.debug('Toggle blocked: Cannot enable without image (asymmetric toggle behavior)');
+                        return false;
+                    }
                 }
+                // Symmetric toggle behavior would skip this check (always allow)
 
                 this.value.on = newState;
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
@@ -1497,8 +1550,13 @@ class ImageModeWidget {
                 return true;
             }
 
-            // Mode selector click (only if enabled AND image connected)
-            if (this.value.on && !this.imageDisconnected && this.isInBounds(pos, this.hitAreas.modeSelector)) {
+            // Mode selector - check value behavior mode
+            // CONDITIONAL (default): Only when toggle ON and image connected
+            // ALWAYS: Always allow (future use case: edit mode even when disabled)
+            const allowModeEdit = this.valueBehavior === ValueBehavior.ALWAYS ||
+                                  (this.value.on && !this.imageDisconnected);
+
+            if (allowModeEdit && this.isInBounds(pos, this.hitAreas.modeSelector)) {
                 this.value.value = this.value.value === 0 ? 1 : 0;
                 logger.debug(`Image mode changed to: ${this.modes[this.value.value]}`);
                 node.setDirtyCanvas(true);
@@ -1910,15 +1968,31 @@ app.registerExtension({
                 logger.debug('serialize_widgets set to:', this.serialize_widgets);
 
                 // Add image mode widget (USE IMAGE? toggle + AR Only/Exact Dims selector)
-                const imageModeWidget = new ImageModeWidget("image_mode");
+                // Asymmetric toggle: Can't enable without image, can disable anytime
+                // Conditional values: Mode only editable when toggle ON and image connected
+                const imageModeWidget = new ImageModeWidget("image_mode", {
+                    toggleBehavior: ToggleBehavior.ASYMMETRIC,
+                    valueBehavior: ValueBehavior.CONDITIONAL
+                });
 
                 // Add copy from image button
                 const copyButton = new CopyImageButton("copy_from_image");
 
                 // Add compact dimension widgets
-                const mpWidget = new DimensionWidget("dimension_megapixel", 1.0, false);
-                const widthWidget = new DimensionWidget("dimension_width", 1920, true);
-                const heightWidget = new DimensionWidget("dimension_height", 1080, true);
+                // Symmetric toggle: Can enable/disable freely
+                // Always values: Can edit values even when toggle OFF
+                const mpWidget = new DimensionWidget("dimension_megapixel", 1.0, false, {
+                    toggleBehavior: ToggleBehavior.SYMMETRIC,
+                    valueBehavior: ValueBehavior.ALWAYS
+                });
+                const widthWidget = new DimensionWidget("dimension_width", 1920, true, {
+                    toggleBehavior: ToggleBehavior.SYMMETRIC,
+                    valueBehavior: ValueBehavior.ALWAYS
+                });
+                const heightWidget = new DimensionWidget("dimension_height", 1080, true, {
+                    toggleBehavior: ToggleBehavior.SYMMETRIC,
+                    valueBehavior: ValueBehavior.ALWAYS
+                });
 
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
