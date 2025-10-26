@@ -414,7 +414,7 @@ class TooltipManager {
             const linkY = y + padding + lines.length * lineHeight;
             ctx.fillStyle = '#4CAF50';
             ctx.font = 'bold 11px sans-serif';
-            ctx.fillText('Click icon for full docs →', x + padding, linkY);
+            ctx.fillText('Shift+Click label for full docs →', x + padding, linkY);
         }
 
         ctx.restore();
@@ -466,15 +466,18 @@ class TooltipManager {
 }
 
 /**
- * Info Icon - Clickable icon that shows tooltips
+ * Info Icon - Label text tooltip trigger (no icon drawn)
  *
- * Renders ℹ️ icon on canvas with hit area detection.
+ * Uses label text as tooltip trigger area - no visual icon.
+ * Hover over label shows tooltip, Shift+Click opens docs.
  * Integrates with TooltipManager for hover state and tooltip display.
  *
  * Usage:
  * - Add to widget: this.infoIcon = new InfoIcon(TOOLTIP_CONTENT.widget_name)
- * - Draw: this.infoIcon.draw(ctx, x, y, height, canvasBounds)
- * - Mouse: if (this.infoIcon.mouse(event, pos, canvasBounds)) return true;
+ * - Set hit area: this.infoIcon.setHitArea(labelX, labelY, labelWidth, labelHeight)
+ * - Mouse: if (this.infoIcon.mouse(event, pos, canvasBounds, nodePos)) return true;
+ *
+ * Note: No visible icon is drawn - the label text itself is the interactive area.
  */
 class InfoIcon {
     constructor(tooltipContent) {
@@ -483,43 +486,32 @@ class InfoIcon {
         this.isHovering = false;
     }
 
-    draw(ctx, x, y, height, canvasBounds) {
+    /**
+     * Set the hit area for tooltip triggering (replaces icon drawing)
+     * Call this after drawing the label text to set the interactive region.
+     *
+     * @param {number} x - Label text X position
+     * @param {number} y - Label text Y position
+     * @param {number} width - Label text width (from ctx.measureText())
+     * @param {number} height - Label text height (typically line height or widget height)
+     */
+    setHitArea(x, y, width, height) {
         if (!tooltipManager.config.showInfoIcons) return;
 
-        const iconSize = 14;
-        const iconX = x; // Use absolute position (widget calculates placement)
-        const iconY = y + (height - iconSize) / 2;
+        // Store label bounds as hit area
+        this.hitArea = { x, y, width, height };
 
-        logger.verbose(`InfoIcon.draw() - x: ${x}, y: ${y}, iconX: ${iconX}, iconY: ${iconY}`);
+        logger.verbose(`InfoIcon.setHitArea() - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    }
 
-        ctx.save();
-
-        // Draw circle background
-        ctx.fillStyle = this.isHovering ? 'rgba(76, 175, 80, 0.3)' : 'rgba(76, 175, 80, 0.2)';
-        ctx.beginPath();
-        ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw "i" symbol
-        ctx.fillStyle = this.isHovering ? '#4CAF50' : '#888888';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('i', iconX + iconSize / 2, iconY + iconSize / 2);
-
-        ctx.restore();
-
-        // Update hit area for mouse detection
-        this.hitArea = {
-            x: iconX,
-            y: iconY,
-            width: iconSize,
-            height: iconSize
-        };
-
-        logger.verbose(`InfoIcon hitArea:`, this.hitArea);
-
-        // Note: Tooltip is drawn in onDrawForeground (after all widgets) for proper z-order
+    /**
+     * Legacy draw method - now just calls setHitArea for backwards compatibility
+     * @deprecated Use setHitArea() instead
+     */
+    draw(ctx, x, y, height, canvasBounds) {
+        // Backwards compatibility - assume this is icon position, not label
+        // Widget should call setHitArea() with actual label bounds instead
+        this.setHitArea(x, y, 14, height);
     }
 
     mouse(event, pos, canvasBounds, nodePos) {
@@ -544,9 +536,13 @@ class InfoIcon {
         }
 
         if (event.type === 'pointerdown' && inBounds) {
-            // Click to open docs
-            tooltipManager.handleClick(this.content);
-            return true;
+            // Shift+Click to open docs (prevents conflicts with normal clicks)
+            if (event.shiftKey) {
+                tooltipManager.handleClick(this.content);
+                return true;
+            }
+            // Regular click without shift - don't consume event (let widget handle it)
+            return false;
         }
 
         return inBounds;
@@ -562,6 +558,44 @@ class InfoIcon {
 
 // Singleton instance
 const tooltipManager = new TooltipManager();
+
+/**
+ * Add tooltip support to a native ComfyUI widget
+ * Only wraps mouse() method - does NOT modify draw() to avoid breaking widget rendering
+ *
+ * @param {object} widget - Native ComfyUI widget (combo, text, etc.)
+ * @param {object} tooltipContent - Tooltip content from TOOLTIP_CONTENT
+ * @param {object} node - The LiteGraph node containing the widget
+ */
+function wrapWidgetWithTooltip(widget, tooltipContent, node) {
+    // Create InfoIcon for this widget
+    widget.infoIcon = new InfoIcon(tooltipContent);
+
+    // Store original mouse method
+    const originalMouse = widget.mouse;
+
+    // Wrap mouse method to handle tooltip events
+    widget.mouse = function(event, pos, node) {
+        logger.verbose(`wrapWidgetWithTooltip.mouse() - widget: ${this.name}, event: ${event.type}, pos: [${pos[0]}, ${pos[1]}]`);
+
+        // Check tooltip first
+        if (this.infoIcon) {
+            const canvasBounds = { width: node.size[0], height: node.size[1] };
+            const tooltipHandled = this.infoIcon.mouse(event, pos, canvasBounds, node.pos);
+            if (tooltipHandled) {
+                logger.debug(`Native widget ${this.name} - tooltip handled event`);
+                node.setDirtyCanvas(true);
+                return true; // Tooltip handled the event
+            }
+        }
+
+        // Call original mouse handler
+        if (originalMouse) {
+            return originalMouse.call(this, event, pos, node);
+        }
+        return false;
+    };
+}
 
 /**
  * Shared utilities for image dimension extraction
@@ -698,6 +732,9 @@ class ScaleWidget {
         // Stores actual image dimensions when USE_IMAGE is enabled
         this.imageDimensionsCache = null;  // {width, height, timestamp, path}
         this.fetchingDimensions = false;   // Prevent concurrent fetches
+
+        // Tooltip support - label-based tooltip trigger
+        this.infoIcon = new InfoIcon(TOOLTIP_CONTENT.scale);
     }
 
     /**
@@ -1014,7 +1051,12 @@ class ScaleWidget {
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.font = "13px sans-serif";
-        ctx.fillText("SCALE", posX, midY);
+        const labelText = "SCALE";
+        const labelTextWidth = ctx.measureText(labelText).width;
+        ctx.fillText(labelText, posX, midY);
+
+        // Set tooltip trigger area on label text
+        this.infoIcon.setHitArea(posX, y, labelTextWidth, height);
 
         // Slider and value display area
         const sliderStartX = posX + 60;
@@ -1336,6 +1378,13 @@ class ScaleWidget {
     mouse(event, pos, node) {
         const canvas = app.canvas;
 
+        // Check info icon first (tooltip on label)
+        const canvasBounds = { width: node.size[0], height: node.size[1] };
+        if (this.infoIcon.mouse(event, pos, canvasBounds, node.pos)) {
+            node.setDirtyCanvas(true);
+            return true; // Tooltip handled the event
+        }
+
         if (event.type === "pointerdown") {
             this.mouseDowned = [...pos];
 
@@ -1563,6 +1612,9 @@ class DimensionWidget {
             valueInc: { x: 0, y: 0, width: 0, height: 0 },
             valueEdit: { x: 0, y: 0, width: 0, height: 0 }
         };
+
+        // Optional tooltip support (only used for MEGAPIXEL)
+        this.infoIcon = config.tooltipContent ? new InfoIcon(config.tooltipContent) : null;
     }
 
     /**
@@ -1597,7 +1649,13 @@ class DimensionWidget {
         ctx.font = "13px sans-serif";  // Slightly smaller for compact layout
 
         const labelText = this.name.replace("dimension_", "").replace("_", " ").toUpperCase();
+        const labelTextWidth = ctx.measureText(labelText).width;
         ctx.fillText(labelText, posX, midY);
+
+        // Set tooltip trigger area on label (if tooltip configured)
+        if (this.infoIcon) {
+            this.infoIcon.setHitArea(posX, y, labelTextWidth, height);
+        }
 
         // Draw number controls (RIGHT side)
         const numberWidth = 110;  // Reduced from 120 for compact layout
@@ -1708,6 +1766,15 @@ class DimensionWidget {
      */
     mouse(event, pos, node) {
         const canvas = app.canvas;
+
+        // Check info icon first (tooltip on label) if configured
+        if (this.infoIcon) {
+            const canvasBounds = { width: node.size[0], height: node.size[1] };
+            if (this.infoIcon.mouse(event, pos, canvasBounds, node.pos)) {
+                node.setDirtyCanvas(true);
+                return true; // Tooltip handled the event
+            }
+        }
 
         if (event.type === "pointerdown") {
             this.mouseDowned = [...pos];
@@ -1928,15 +1995,11 @@ class ImageModeWidget {
             this.hitAreas.modeSelector = { x: 0, y: 0, width: 0, height: 0 };
         }
 
-        // Draw info icon positioned dynamically after label text
-        const iconSize = 14;
-        const iconMarginFromText = 6; // Space after "USE IMAGE?" text
-        const iconX = labelStartX + labelTextWidth + iconMarginFromText; // Position AFTER text
+        // Set tooltip trigger area to the label text itself (no icon drawn)
+        // Hover over "USE IMAGE?" label shows tooltip, Shift+Click opens docs
+        logger.verbose(`ImageModeWidget.draw() - width: ${width}, labelStart: ${labelStartX}, labelWidth: ${labelTextWidth}, modeX: ${modeX}, y: ${y}`);
 
-        logger.verbose(`ImageModeWidget.draw() - width: ${width}, labelEnd: ${labelStartX + labelTextWidth}, iconX: ${iconX}, modeX: ${modeX}, y: ${y}`);
-
-        const canvasBounds = { width: node.size[0], height: node.size[1] };
-        this.infoIcon.draw(ctx, iconX, y, height, canvasBounds);
+        this.infoIcon.setHitArea(labelStartX, y, labelTextWidth, height);
 
         ctx.restore();
     }
@@ -2471,7 +2534,8 @@ app.registerExtension({
                 // Always values: Can edit values even when toggle OFF
                 const mpWidget = new DimensionWidget("dimension_megapixel", 1.0, false, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
-                    valueBehavior: ValueBehavior.ALWAYS
+                    valueBehavior: ValueBehavior.ALWAYS,
+                    tooltipContent: TOOLTIP_CONTENT.megapixel  // Add tooltip for MEGAPIXEL
                 });
                 const widthWidget = new DimensionWidget("dimension_width", 1920, true, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
@@ -2508,7 +2572,115 @@ app.registerExtension({
                 // Set initial size (widgets will auto-adjust)
                 this.setSize(this.computeSize());
 
+                // Wrap native ComfyUI widgets with tooltip support
+                // These are created by Python node definition, not custom widgets
+                const divisibleWidget = this.widgets.find(w => w.name === "divisible_by");
+                if (divisibleWidget) {
+                    wrapWidgetWithTooltip(divisibleWidget, TOOLTIP_CONTENT.divisible_by, this);
+                    logger.debug('Added tooltip to divisible_by widget, type:', divisibleWidget.type);
+                } else {
+                    logger.debug('divisible_by widget not found');
+                }
+
+                const customAspectRatioWidget = this.widgets.find(w => w.name === "custom_aspect_ratio");
+                if (customAspectRatioWidget) {
+                    wrapWidgetWithTooltip(customAspectRatioWidget, TOOLTIP_CONTENT.custom_aspect_ratio, this);
+                    logger.debug('Added tooltip to custom_aspect_ratio widget, type:', customAspectRatioWidget.type);
+                } else {
+                    logger.debug('custom_aspect_ratio widget not found');
+                }
+
+                const aspectRatioWidget = this.widgets.find(w => w.name === "aspect_ratio");
+                if (aspectRatioWidget) {
+                    wrapWidgetWithTooltip(aspectRatioWidget, TOOLTIP_CONTENT.aspect_ratio, this);
+                    logger.debug('Added tooltip to aspect_ratio widget, type:', aspectRatioWidget.type);
+                } else {
+                    logger.debug('aspect_ratio widget not found');
+                }
+
+                // Set up hit areas for native widgets after they're drawn
+                // We need to intercept drawWidgets to get accurate Y positions
+                const originalDrawWidgets = nodeType.prototype.drawWidgets;
+                nodeType.prototype.drawWidgets = function(ctx, area) {
+                    // Call original drawWidgets
+                    if (originalDrawWidgets) {
+                        originalDrawWidgets.call(this, ctx, area);
+                    }
+
+                    // After widgets are drawn, set hit areas for native widgets with tooltips
+                    ctx.save();
+                    ctx.font = "13px sans-serif";
+
+                    let nativeWidgetsWithTooltips = 0;
+                    for (const widget of this.widgets) {
+                        if (widget.infoIcon && widget.type !== "custom") {
+                            nativeWidgetsWithTooltips++;
+                            logger.debug(`Native widget ${widget.name} - has infoIcon, type: ${widget.type}, last_y: ${widget.last_y}`);
+
+                            if (widget.last_y !== undefined) {
+                                // Native widget with tooltip - last_y is set by LiteGraph during rendering
+                                const widgetHeight = LiteGraph.NODE_WIDGET_HEIGHT;
+                                const labelText = widget.label || widget.name;
+                                const labelWidth = ctx.measureText(labelText).width;
+
+                                // Set hit area using LiteGraph's last_y position
+                                widget.infoIcon.setHitArea(15, widget.last_y, labelWidth, widgetHeight);
+
+                                logger.debug(`Native widget ${widget.name} - set hit area at y=${widget.last_y}, width=${labelWidth}, height=${widgetHeight}`);
+                            }
+                        }
+                    }
+
+                    if (nativeWidgetsWithTooltips === 0) {
+                        logger.debug('No native widgets with tooltips found in drawWidgets');
+                    }
+
+                    ctx.restore();
+                };
+
                 return r;
+            };
+
+            // Intercept node-level mouse events to handle native widget tooltips
+            // Native widgets don't get their mouse() method called by LiteGraph
+            const originalOnMouseMove = nodeType.prototype.onMouseMove;
+            nodeType.prototype.onMouseMove = function(event, localPos, graphCanvas) {
+                // Check native widgets with tooltips first
+                for (const widget of this.widgets) {
+                    if (widget.infoIcon && widget.type !== "custom") {
+                        const canvasBounds = { width: this.size[0], height: this.size[1] };
+                        if (widget.infoIcon.mouse(event, localPos, canvasBounds, this.pos)) {
+                            this.setDirtyCanvas(true, true);
+                            return true; // Tooltip handled the event
+                        }
+                    }
+                }
+
+                // Call original handler
+                if (originalOnMouseMove) {
+                    return originalOnMouseMove.call(this, event, localPos, graphCanvas);
+                }
+                return false;
+            };
+
+            const originalOnMouseDown = nodeType.prototype.onMouseDown;
+            nodeType.prototype.onMouseDown = function(event, localPos, graphCanvas) {
+                // Check native widgets with tooltips first (for Shift+Click)
+                for (const widget of this.widgets) {
+                    if (widget.infoIcon && widget.type !== "custom") {
+                        const canvasBounds = { width: this.size[0], height: this.size[1] };
+                        if (widget.infoIcon.mouse(event, localPos, canvasBounds, this.pos)) {
+                            this.setDirtyCanvas(true, true);
+                            return true; // Tooltip handled the event
+                        }
+                    }
+                }
+
+                // Call original handler
+                if (originalOnMouseDown) {
+                    return originalOnMouseDown.call(this, event, localPos, graphCanvas);
+                }
+                return false;
             };
 
             // Store scale widget configuration in workflow (not sent to Python)
