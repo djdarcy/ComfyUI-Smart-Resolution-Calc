@@ -13,20 +13,21 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
-*Example workflow showing the Smart Resolution Calculator with WIDTH enabled, calculating height automatically from aspect ratio, and outputting to ClownsharKSampler.*
+*Example workflow showing the Smart Resolution Calculator with image input (AR Only mode), HEIGHT enabled at 1200, SCALE at 1.10x, calculating width from 1:1 aspect ratio, and outputting 1320×1320 to ClownsharkKSampler.*
 
 ## Features
 
+- **Image dimension extraction** - Connect images to auto-extract aspect ratio or exact dimensions ([detailed guide](docs/image-input.md))
+- **Interactive tooltips** - Hover over widget labels for quick help, extended explanations, and links to documentation
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
-- **Scale multiplier (v0.1.2+)** - Scale dimensions up/down (0-10x) with custom widget and real-time preview
-- **Compact custom widgets** - rgthree-style height controls with inline toggles
+- **Scale multiplier** - Scale dimensions up/down (0-10x) with custom widget and real-time preview
+- **Compact custom widgets** - rgthree-style controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
 - **Visual preview** - See exact dimensions and aspect ratio before generation
-- **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64, or "Exact")
-- **Debug logging** - Python + JavaScript debug modes for troubleshooting
+- **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64)
 - **Workflow persistence** - Widget states save/load with workflows
 
 ## Prerequisites
@@ -73,7 +74,7 @@ Then restart ComfyUI or use **Manager → Refresh Node Definitions**.
 
 1. Add **Smart Resolution Calculator** to your workflow
 2. Select an aspect ratio (default: 3:4 Golden Ratio)
-3. **Enable the dimensions you know** by clicking toggle switches
+3. **Enable the dimensions you know/want** by clicking toggle switches
 4. The node automatically calculates missing values
 5. Check the **info** output to verify the calculation mode
 6. Connect **latent** output to your KSampler
@@ -121,6 +122,16 @@ No toggles active uses 1.0 MP with selected aspect ratio:
 - **Result**: Default dimensions for selected ratio
 - **Info**: `Mode: Default (1.0 MP) | W: 1216 × H: 688 | Div: 16`
 
+### Image Input
+
+Connect an IMAGE output to automatically extract dimensions or aspect ratio. See the [Image Input Guide](docs/image-input.md) for detailed documentation.
+
+**Quick Start**:
+- Connect image → Extraction modes automatically available
+- **AR Only** (default): Extracts aspect ratio, uses with megapixel setting
+- **Exact Dims**: Uses exact image dimensions with scale applied
+- **Copy Button**: Extract once, then manually adjust
+
 ### Aspect Ratio Presets
 
 **Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
@@ -142,44 +153,6 @@ Each dimension has a compact widget with toggle (LEFT) and value (RIGHT):
 - **[-]** button: Decrement (MP: -0.1, W/H: -8px)
 - **Value**: Click to type exact number
 - **[+]** button: Increment (MP: +0.1, W/H: +8px)
-
-### Scale Multiplier (v0.1.2+)
-
-Apply uniform scaling to calculated dimensions:
-
-**Scale Widget**:
-- **Slider**: Drag handle to adjust scale (1.0x visually centered)
-- **Value Display**: Click to type exact scale value
-- **Range**: 0-10x (can type higher values)
-- **Steps**: 0.05x below 1.0, 0.1x at/above 1.0
-- **Default**: 1.0x (no scaling)
-
-**Real-time Tooltip**:
-- Hover over scale widget to see dimension preview
-- Shows base dimensions (before scale)
-- Shows scaled dimensions (after scale)
-- Shows final dimensions (after divisibility rounding)
-- Updates as you drag the slider
-
-**Use Cases**:
-- Quickly test multiple resolutions without changing base dimensions
-- Downscale for faster iterations (0.5x = half resolution)
-- Upscale for final renders (2.0x = double resolution)
-- Fine-tune dimensions while maintaining aspect ratio
-
-**Example**: Height 1280 + AR 16:9 + Scale 0.5x
-- Base: 2275 × 1280 (from AR calculation)
-- Scaled: 1137 × 640 (multiplied by 0.5)
-- Final: 1136 × 640 (rounded to divisibility)
-
-### Divisibility Override (v0.1.2+)
-
-Choose how dimensions are rounded:
-
-- **8/16/32/64**: Round to nearest multiple (ensures model compatibility)
-- **Exact**: No rounding (use calculated dimensions as-is)
-
-Use "Exact" when you need precise dimensions that don't require model compatibility rounding.
 
 ### Outputs
 
@@ -241,16 +214,27 @@ export COMFY_DEBUG_SMART_RES_CALC=true
 
 **JavaScript Logging** (Browser console F12):
 ```javascript
+// Standard debug logging
 localStorage.setItem('DEBUG_SMART_RES_CALC', 'true');
+
+// Verbose logging (includes coordinates, hit areas, detailed state)
+localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true');
 ```
 
-Debug logs show widget data flow, calculation steps, and final results.
+Debug logs show widget data flow, calculation steps, and final results. Verbose mode adds detailed coordinate logging for tooltip positioning and widget layout debugging.
 
 **Disable**:
 ```bash
 set COMFY_DEBUG_SMART_RES_CALC=false
 localStorage.removeItem('DEBUG_SMART_RES_CALC');
+localStorage.removeItem('VERBOSE_SMART_RES_CALC');
 ```
+
+## Documentation
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[Image Input Guide](docs/image-input.md)** - Detailed documentation for image dimension extraction feature
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup and contribution guidelines
 
 ## Contributing
 
@@ -304,7 +288,7 @@ Custom JavaScript widgets with compact 24px height design:
 - `serialize_widgets = true` enables workflow persistence
 - Data structure: `{on: boolean, value: number}`
 
-**Critical**: ComfyUI requires both `INPUT_TYPES["hidden"]` declarations AND `serialize_widgets = true` for proper widget data flow. One alone is insufficient.
+**NOTE**: ComfyUI requires both `INPUT_TYPES["hidden"]` declarations AND `serialize_widgets = true` for proper widget data flow. One alone is insufficient.
 
 ## Acknowledgments
 

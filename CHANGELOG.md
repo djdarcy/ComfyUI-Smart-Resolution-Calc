@@ -1,0 +1,429 @@
+# Changelog
+
+All notable changes to ComfyUI Smart Resolution Calculator will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased - 0.2.0-beta]
+
+### Planned
+- Additional testing and polish
+- Shift+Click documentation for native widgets
+
+## [0.2.0-alpha8] - 2025-10-26
+
+### Added
+- **Label-Based Tooltip System**: Info icons positioned on widget labels with quick/full tooltips and external documentation
+- **Tooltip Manager**: Centralized tooltip lifecycle management with dual-delay timing (quick at 250ms, full at 1250ms)
+- **InfoIcon Component**: Reusable info icon with hit detection, hover state, and click-to-docs functionality
+- **Composite Widget Support**: ImageModeWidget with toggle + mode selector + tooltip (complex layout)
+- **Native Widget Tooltips**: Tooltip support for ComfyUI native widgets (aspect_ratio, divisible_by, custom_aspect_ratio)
+- **Shift+Click Documentation**: Quick tooltip on hover, full tooltip after delay, Shift+Click opens external docs (USE IMAGE widget)
+- **Performance Optimized**: Hot-path logging removed, efficient hit detection, minimal redraw overhead
+
+### Technical (Frontend)
+- **TooltipManager** (`web/smart_resolution_calc.js` lines 183-278):
+  - Global singleton pattern for lifecycle management
+  - Dual-delay system: quick (250ms), full (1250ms + 750ms fade-in)
+  - Reset on mouse leave, Shift+Click handling
+  - Clean state management (activeTooltip, quickShown, fullShown)
+- **InfoIcon** (`web/smart_resolution_calc.js` lines 280-514):
+  - Label-relative positioning (icon at label end)
+  - Hit area detection with padding (15px × widgetHeight)
+  - Three states: normal, hover (blue #4a7a9a), docs available (cursor:pointer)
+  - External docs handling via `window.open(docsUrl)`
+- **Tooltip Content** (`web/tooltip_content.js`):
+  - Centralized content definitions (quick, full, docsUrl, hoverDelay)
+  - Six widgets configured: image_mode, megapixel, divisible_by, custom_aspect_ratio, scale, aspect_ratio
+  - Prioritized by user confusion potential (high/medium/low)
+- **Native Widget Integration** (`web/smart_resolution_calc.js` lines 2555-2590):
+  - `wrapWidgetWithTooltip()` method for native widgets
+  - ComfyUI drawWidgets() override to set hit areas after native draw
+  - Hit area calculated from label position + label width
+  - Tooltip draw/mouse delegated to InfoIcon
+- **ImageModeWidget Integration** (lines 1918-2035):
+  - Composite widget with InfoIcon positioned at label
+  - Toggle + mode selector + tooltip in single widget
+  - Hit area set during draw, tooltip handled in mouse method
+- **Widget Measurements**:
+  - Label width via `ctx.measureText(labelText).width`
+  - Icon positioned at label end (labelX + labelWidth)
+  - Hit area: 15px left of label start to end of label text
+  - Widget height: `LiteGraph.NODE_WIDGET_HEIGHT` (28px standard)
+
+### Tooltip Content Added
+1. **USE IMAGE?** (image_mode) - High priority
+   - Quick: "Extract dimensions from image. AR Only: ratio | Exact Dims: exact"
+   - Full: Explains two modes, asymmetric behavior, snapshot workflow
+   - Docs: `/docs/image-input.md` (Shift+Click functional)
+2. **MEGAPIXEL** (megapixel) - High priority
+   - Quick: "Target resolution in millions of pixels (1MP = 1024×1024)"
+   - Full: Explains MP calculation, future features
+3. **divisible_by** - High priority
+   - Quick: "Ensures dimensions divisible by N for AI model compatibility"
+   - Full: Explains why needed, model requirements, recommended values
+4. **custom_aspect_ratio** - Medium priority
+   - Quick: "Format: W:H (fractional OK: '1:2.5', '16:9', '1.85:1')"
+   - Full: Multiple format examples, cinema ratios
+5. **SCALE** - Medium priority
+   - Quick: "Multiplies base dimensions (applies to image input + manual)"
+   - Full: Explains interaction with image modes, asymmetric slider
+6. **aspect_ratio** - Low priority
+   - Quick: "Aspect ratio for calculations (ignored if both W+H set)"
+   - Full: Priority rules, preset vs custom ratios
+
+### Benefits
+- ✅ **Self-Documenting UI**: Users discover features via tooltips without reading full docs
+- ✅ **Progressive Disclosure**: Quick hint → full explanation → external docs (three levels)
+- ✅ **Label Integration**: Icons positioned naturally at widget labels (not separate widgets)
+- ✅ **Performance**: Hot-path logging removed (~10 verbose logs), minimal redraw overhead
+- ✅ **Extensible**: Easy to add tooltips to new widgets via TOOLTIP_CONTENT
+- ✅ **Native Widget Support**: Works with both custom and ComfyUI native widgets
+
+### Documentation
+- Updated `docs/image-input.md` to reflect current ImageModeWidget implementation
+- Documented composite widget structure (toggle + mode selector)
+- Added Shift+Click functionality documentation
+
+### Performance Improvements
+- Removed verbose logging from tooltip hot paths (draw/mouse methods that fire every frame)
+- Eliminated ~10 debug logs from TooltipManager, ImageModeWidget, CopyImageButton
+- Kept one-time event logs (node creation, toggle blocking)
+
+### Known Limitations
+- Shift+Click only functional for USE_IMAGE widget (others have `docsUrl: null`)
+- Native widget Shift+Click planned for future release (requires ComfyUI framework changes)
+- Single-level tooltip nesting (no tooltip-within-tooltip)
+
+## [0.2.0-alpha7] - 2025-10-26
+
+### Added
+- **Behavior Pattern System**: Configurable widget interaction modes via `ToggleBehavior` and `ValueBehavior` enums
+- **ToggleBehavior Enum**: SYMMETRIC (can toggle both directions freely) / ASYMMETRIC (one direction has constraints)
+- **ValueBehavior Enum**: ALWAYS (values always editable) / CONDITIONAL (values only editable when conditions met)
+- **Explicit Configuration**: Widget behavior now explicitly configured via constructor config parameter
+
+### Changed
+- **DimensionWidget**: Now explicitly configured as `ToggleBehavior.SYMMETRIC` + `ValueBehavior.ALWAYS`
+- **ImageModeWidget**: Now explicitly configured as `ToggleBehavior.ASYMMETRIC` + `ValueBehavior.CONDITIONAL`
+- **Self-Documenting Code**: Behavior intent obvious from configuration (e.g., `valueBehavior: ValueBehavior.ALWAYS`)
+
+### Technical (Frontend)
+- **Behavior Enums** (`web/smart_resolution_calc.js` lines 75-105):
+  - `ToggleBehavior`: Controls when toggle can be enabled/disabled
+  - `ValueBehavior`: Controls when values can be edited
+  - Independent dimensions support all 4 combinations
+- **DimensionWidget** (lines 1081-1299):
+  - Constructor accepts optional `config` parameter with behavior properties
+  - Mouse method checks `valueBehavior` before allowing value editing
+  - Defaults preserve alpha6 behavior (SYMMETRIC toggle + ALWAYS values)
+- **ImageModeWidget** (lines 1365-1568):
+  - Constructor accepts optional `config` parameter with behavior properties
+  - Toggle logic wrapped in `toggleBehavior` check (asymmetric by default)
+  - Mode selector checks `valueBehavior` (conditional by default)
+  - Defaults preserve alpha6 behavior (ASYMMETRIC toggle + CONDITIONAL values)
+
+### Behavior Combinations Supported
+
+All 4 combinations are valid and supported:
+
+1. **Symmetric Toggle + Always Values** (DimensionWidget)
+   - Toggle: Can enable/disable freely
+   - Values: Always editable regardless of toggle state
+
+2. **Asymmetric Toggle + Conditional Values** (ImageModeWidget)
+   - Toggle: Can disable anytime, can only enable when image connected
+   - Values: Only editable when toggle ON and image connected
+
+3. **Asymmetric Toggle + Always Values** (Future use case)
+   - Toggle: Has constraints (e.g., can't enable without connection)
+   - Values: Always editable even when toggle OFF
+
+4. **Symmetric Toggle + Conditional Values** (Future use case)
+   - Toggle: Can enable/disable freely
+   - Values: Only editable when toggle ON
+
+### Benefits
+
+**User Experience**:
+- Behavior is predictable and consistent
+- Alpha6 symmetric value editing preserved for DimensionWidget
+- ImageModeWidget constraints preserved (can't enable without image)
+
+**Developer Experience**:
+- Self-documenting code (intent clear from configuration)
+- Future widgets can choose behavior by passing config object
+- Pattern established for consistent widget development
+- Extensible (can add READONLY or other modes later)
+
+**Terminology**:
+- **SYMMETRIC/ASYMMETRIC** (toggles): Reflects bidirectional nature (both directions free vs one constrained)
+- **ALWAYS/CONDITIONAL** (values): Reflects editing availability (always editable vs conditionally editable)
+- Intuitive terminology matching actual behavior
+
+### Backward Compatibility
+- 100% backward compatible with alpha6
+- All defaults preserve exact current behavior
+- Config parameter optional (defaults handle everything)
+- No breaking changes to existing workflows
+
+## [0.2.0-alpha6] - 2025-10-26
+
+### Fixed
+- **DimensionWidget Value Editing**: Values can now be edited when MEGAPIXEL, WIDTH, HEIGHT widgets are toggled OFF
+- **Symmetric Value Behavior**: Clicking grayed-out dimension values opens edit dialog (previously blocked)
+- **Hit Area Registration**: Widget draw() method now sets value edit hit areas even when toggle is OFF
+
+### Behavior Changes
+- **Value Editing** (MEGAPIXEL/WIDTH/HEIGHT): Can edit values regardless of toggle state (symmetric behavior)
+  - Toggle ON: Click value → edit dialog appears ✅
+  - Toggle OFF: Click grayed value → edit dialog appears ✅ (NEW)
+- **Button Visibility**: +/- increment/decrement buttons correctly hidden when toggle OFF (unchanged)
+  - Toggle ON: +/- buttons visible and functional ✅
+  - Toggle OFF: +/- buttons hidden, value still editable ✅
+
+### What This Fixes
+**Problem**: In alpha5 and earlier, dimension values couldn't be edited when toggled OFF
+- User disables WIDTH, clicks "960" → nothing happens (edit blocked)
+- Only workaround: Re-enable WIDTH, edit value, disable WIDTH again
+- Asymmetric behavior forced unnecessary toggle state changes
+
+**Solution**: Set hit areas in draw() method when toggle OFF, allow mouse() to handle clicks
+- User disables WIDTH, clicks "960" → edit dialog appears ✅
+- Value editable regardless of toggle state (symmetric behavior)
+- +/- buttons still correctly hidden when toggle OFF
+
+### Technical (Frontend)
+- **Draw Method** (`web/smart_resolution_calc.js` lines 1112-1125):
+  - Set `hitAreas.valueEdit` when toggle OFF (enables click detection)
+  - Clear `hitAreas.valueDec/Inc` when toggle OFF (prevents invisible button clicks)
+- **Mouse Method** (`web/smart_resolution_calc.js` lines 1221-1226):
+  - Removed `if (this.value.on)` conditional blocking value editing
+  - Changed comment from "Only handle if toggle is on" to "symmetric behavior - always editable"
+
+### Known Limitations
+- Full behavior pattern system not yet implemented (planned for future release)
+- Currently only DimensionWidget has symmetric value editing
+- Future: Configurable toggle/value/button behavior modes per widget type
+
+## [0.2.0-alpha5] - 2025-10-25
+
+### Fixed
+- **Scale Tooltip AR Only Mode**: Tooltip now correctly respects user's dimension settings when USE_IMAGE in "AR Only" mode
+- **Accurate AR-Based Calculation**: Extracts aspect ratio from image and applies to user's WIDTH/HEIGHT/MEGAPIXEL settings
+- **Mode-Aware Logic**: Distinguishes between "AR Only" (extract AR, use with settings) and "Exact Dims" (use raw image dimensions)
+
+### Technical (Frontend)
+- **Mode Detection**: Check `imageMode` value (0=AR Only, 1=Exact Dims) to determine calculation path
+- **AR Extraction**: Compute `imageAR = width / height` from cached image dimensions
+- **AR-Based Calculation**: Use extracted AR with user's dimension settings:
+  - HEIGHT enabled → compute WIDTH from HEIGHT × AR
+  - WIDTH enabled → compute HEIGHT from WIDTH ÷ AR
+  - MEGAPIXEL enabled → compute dimensions from MP and AR
+  - Both W+H enabled → use as-is (ignore AR)
+  - No settings → use raw image dimensions
+- **AR Validation**: Check for NaN, infinity, zero before using AR (graceful fallback)
+- **Enhanced Logging**: Show mode, extracted AR, and computed dimensions in debug logs
+
+### Behavior Changes
+- **AR Only Mode** (imageMode=0): Tooltip shows computed dimensions from image AR + user settings
+  - Example: Image 1024×1024 (1:1), HEIGHT=1200 → Base: 1200×1200
+  - Previously showed: Base: 1024×1024 (incorrect - ignored user's HEIGHT)
+- **Exact Dims Mode** (imageMode=1): Tooltip shows raw image dimensions (unchanged)
+  - Example: Image 1024×1024, HEIGHT=1200 → Base: 1024×1024 (correct - ignores HEIGHT)
+
+### What This Fixes
+**Problem**: In alpha4, Scale tooltip ignored user's dimension settings in "AR Only" mode
+- User sets HEIGHT=1200 with 1024×1024 image
+- Expected: Base 1200×1200 (computed from 1:1 AR + HEIGHT)
+- Got: Base 1024×1024 (raw image dimensions)
+
+**Solution**: Extract AR from image, apply to user's settings (matches backend logic)
+- Now shows: Base 1200×1200 (computed WIDTH from HEIGHT × 1:1 AR)
+- Tooltip preview matches actual backend calculation
+
+### Testing Recommendations
+Test all combinations of USE_IMAGE modes and dimension settings:
+1. AR Only + HEIGHT → should compute WIDTH from AR
+2. AR Only + WIDTH → should compute HEIGHT from AR
+3. AR Only + MEGAPIXEL → should compute dimensions from AR + MP
+4. Exact Dims + HEIGHT → should ignore HEIGHT, use image dimensions
+5. Exact Dims + WIDTH → should ignore WIDTH, use image dimensions
+
+## [0.2.0-alpha4] - 2025-10-25
+
+### Fixed
+- **Scale Tooltip Image-Aware**: Scale widget tooltip now shows correct base dimensions when USE_IMAGE is enabled
+- **Automatic Dimension Fetching**: Tooltip silently fetches actual image dimensions in background using hybrid B+C strategy
+- **Accurate Preview**: Users see the true starting dimensions (from image) rather than stale widget values
+
+### Added
+- **ImageDimensionUtils Module**: Shared utility functions for image dimension extraction (eliminates code duplication)
+- **Dimension Caching**: ScaleWidget caches image dimensions for fast, responsive tooltip preview
+- **Auto-Refresh Triggers**: Dimension cache automatically refreshes when image connected/disconnected or USE_IMAGE toggled
+
+### Changed
+- **CopyImageButton Refactored**: Now uses shared ImageDimensionUtils instead of duplicating fetch methods
+- **Scale Preview Logic**: calculatePreview() checks USE_IMAGE state and uses cached image dimensions when available
+- **Graceful Fallback**: If image dimensions unavailable, tooltip falls back to widget-based calculations (existing behavior)
+
+### Technical (Frontend)
+- **ImageDimensionUtils**: Three shared methods for dimension extraction:
+  - `getImageFilePath()` - Extract path from LoadImage nodes
+  - `fetchDimensionsFromServer()` - Server endpoint fetch (Tier 1)
+  - `parseDimensionsFromInfo()` - Cached info parsing (Tier 2)
+- **ScaleWidget.refreshImageDimensions()**: Async method using hybrid B+C strategy
+  - Tier 1: Server endpoint (immediate for LoadImage nodes)
+  - Tier 2: Info parsing (cached execution output)
+  - Tier 3: Clear cache (fallback to widget values)
+- **Dimension Cache Structure**: `{width, height, timestamp, path}` with path-based validation
+- **Connection Change Handler**: Triggers dimension refresh on image connect/disconnect
+- **Toggle Handler**: Triggers dimension refresh when USE_IMAGE toggled on/off
+- **Performance**: Cache prevents redundant fetches, <50ms refresh time
+
+### Benefits
+- ✅ **Tooltip Accuracy**: Preview matches actual image dimensions when USE_IMAGE enabled
+- ✅ **No User Action**: Dimension fetching happens silently in background
+- ✅ **Fast & Responsive**: Cached dimensions keep tooltip snappy (no delays)
+- ✅ **Code Reuse**: Shared utilities eliminate duplication between CopyImageButton and ScaleWidget
+- ✅ **Robust Fallback**: Multi-tier strategy ensures tooltip always works
+
+### Known Limitations
+- Cache only refreshes on connection change or toggle (not on LoadImage widget changes)
+- Generated images (not from files) require workflow run before dimensions cached
+
+### Known Issues (Will Fix in Alpha5)
+- Asymmetric toggle logic incorrectly applied to dimension widgets (MEGAPIXEL, WIDTH, HEIGHT)
+- Should only apply to USE_IMAGE widget, dimension widgets should have symmetric toggle behavior
+
+## [0.2.0-alpha3] - 2025-10-25
+
+### Added
+- **Hybrid B+C Copy Button**: Fully functional "Copy from Image" button with three-tier fallback strategy
+- **Server Endpoint**: `/smart-resolution/get-dimensions` API for immediate dimension extraction from Load Image nodes
+- **UNDO Button**: One-level undo for copy operations (restores previous WIDTH/HEIGHT values and toggle states)
+- **USE_IMAGE Disabled State**: Asymmetric toggle logic when image input is disconnected
+- **Multi-Level Debug Logging**: Verbose/Debug/Info/Error levels with localStorage control
+- **Tier 1 - Server Method**: Reads image file metadata via PIL (works immediately for file-based images)
+- **Tier 2 - Info Parsing**: Extracts dimensions from cached execution output (works after first workflow run)
+- **Tier 3 - Instructions**: Helpful dialog guiding users through manual workflow
+
+### Changed
+- **Toggle State Preservation**: Copy button now preserves user's WIDTH/HEIGHT toggle states (doesn't force ON)
+- **Widget Property Naming**: Renamed `disabled` to `imageDisconnected` to avoid LiteGraph framework conflicts
+
+### Fixed
+- **Visual Corruption**: Hidden default scale widget no longer renders over USE_IMAGE widget
+- **Mouse Event Blocking**: LiteGraph `disabled` property was preventing all mouse events - now uses custom property
+- **Server Endpoint**: Now handles filename-only paths (constructs full path in input directory)
+- **Widget Type**: CopyImageButton now uses `type = "custom"` for proper mouse event routing
+- **Logger Methods**: Added `info()`, `error()`, `verbose()` methods to DebugLogger
+
+### Technical (Backend)
+- Added `SmartResolutionCalc.get_image_dimensions_from_path()` static method
+- Security validation: Path checking to prevent directory traversal
+- Filename detection: Automatically constructs full path from filename when needed
+- Allowed directories: ComfyUI input/output/temp folders only
+- API endpoint registration in `__init__.py` with aiohttp
+
+### Technical (Frontend)
+- `CopyImageButton.copyFromImage()` orchestrates three-tier fallback
+- `CopyImageButton.undoCopy()` restores previous dimension values
+- `ImageModeWidget.mouse()` implements asymmetric toggle logic (allow OFF, block ON when disconnected)
+- `getImageFilePath()` extracts file path from LoadImage nodes
+- `fetchDimensionsFromServer()` async server call with error handling
+- `parseDimensionsFromInfo()` regex parsing of cached info output
+- `populateWidgets()` saves undo state before updating, preserves toggle states
+- `showSuccessNotification()` logs success with source indicator
+- Dual-button layout: Copy button shrinks when Undo available (3px margin)
+- Success logging: `✓ Copied from File: 1920×1080 (16:9)`
+- Undo logging: `↶ Undone: Restored WIDTH=512 (ON), HEIGHT=512 (OFF)`
+
+### Coverage
+- ✅ **Load Image (file)** - Works immediately via server endpoint
+- ✅ **Previous execution** - Works via cached info parsing
+- ✅ **Copy undo** - Restores previous values with one-level stack
+- ✅ **USE_IMAGE disabled** - Cannot enable without image, can disable anytime
+- ⚠️ **Generated images** - Works after first workflow run (info parsing)
+
+### Known Limitations
+- Generated images (not from files) require workflow run before copy works
+- Server endpoint only supports file-based Load Image nodes currently
+- UNDO is one-level only (not multi-level undo stack)
+- No visual indication of USE_IMAGE disabled state (blocks clicks only)
+
+## [0.2.0-alpha2] - 2025-10-25
+
+### Changed (from alpha1)
+- **ImageModeWidget Styling Fixes**: Added "USE IMAGE?" label, fixed toggle colors
+- **Label Display**: Widget now shows "[Toggle] USE IMAGE? [AR Only/Exact Dims]" layout
+- **Toggle Color**: Matches dimension widgets (green #4CAF50 when ON, gray #888888 when OFF)
+- **Mode Selector**: Fixed width (100px), proper alignment on right side
+
+### Technical
+- Updated `ImageModeWidget.draw()` to include label text
+- Updated `ImageModeWidget.drawToggle()` to match DimensionWidget style exactly
+- Fixed mode selector positioning and hit area detection
+
+### Known Issues
+- Copy button still shows placeholder instructions (will fix in alpha3)
+- Requires hybrid B+C implementation for immediate copying
+
+## [0.2.0-alpha1] - 2025-10-25
+
+### Added
+- **Enable/Disable Toggle**: `enable_image_input` parameter allows turning off image extraction without disconnecting
+- **Copy from Image Button**: New button widget for snapshot workflow (extract once, then manually adjust)
+- **Parameter Tooltips**: Native ComfyUI tooltips explaining each image input parameter
+- **Override Warning**: Info output shows `⚠️ [Manual W/H Ignored]` when Exact Dims mode overrides manual settings
+- **Documentation**: Detailed image input guide in `docs/image-input.md`
+
+### Changed
+- **Parameter Renamed**: `match_exact_dimensions` → `use_image_dimensions` (clearer reference to image input)
+- **Version Phase**: Updated from alpha to beta (UX improvements complete)
+- **README Structure**: Simplified README, moved detailed docs to CHANGELOG and `docs/` folder
+
+### Improved
+- Image input parameters now clearly reference the image source
+- Users can understand which settings are active via override warnings
+- Three distinct workflows documented: Live AR, Exact Dims, Snapshot
+
+## [0.2.0-alpha] - 2025-10-25
+
+### Added
+- **Image Input Feature**: Optional IMAGE input to extract dimensions from reference images
+- **Two Extraction Modes**:
+  - AR Only (default): Extract aspect ratio, use with megapixel calculation
+  - Exact Dims: Use exact image dimensions with scale applied
+- **Visual Indicator**: Node background color changes when image connected
+- **Image Source Info**: Info output shows image extraction mode and dimensions
+
+### Technical
+- Python: Image dimension extraction from torch tensor `[batch, height, width, channels]`
+- JavaScript: Visual connection indicator via `onConnectionsChange` handler
+- Backward compatible with v0.1.x workflows
+
+## [0.1.3-alpha] - 2025-10-22
+
+### Fixed
+- Various bug fixes and stability improvements
+
+## [0.1.0-alpha] - 2025-10-20
+
+### Added
+- Initial release with compact custom widgets
+- 5 calculation modes (Width+Height, Width+AR, Height+AR, MP+AR, Default)
+- 23 preset aspect ratios (portrait, square, landscape)
+- Custom aspect ratio support
+- Scale multiplier with asymmetric slider (0.0-10.0x, 1.0x centered)
+- Direct latent output
+- Visual preview image
+- Divisibility control (8/16/32/64)
+- Debug logging (Python + JavaScript)
+- Workflow persistence
+
+### Technical
+- rgthree-style compact widgets with toggle LEFT, value RIGHT
+- Widget state serialization for workflow save/load
+- ComfyUI Registry publication

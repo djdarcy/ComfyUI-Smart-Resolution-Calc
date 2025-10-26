@@ -82,10 +82,12 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
+                "image": ("IMAGE",),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
             # Widget data structure: {'on': bool, 'value': number}
             "hidden": {
+                "image_mode": "IMAGE_MODE_WIDGET",  # {on: bool, value: 0|1} - 0=AR Only, 1=Exact Dims
                 "dimension_megapixel": "DIMENSION_WIDGET",
                 "dimension_width": "DIMENSION_WIDGET",
                 "dimension_height": "DIMENSION_WIDGET",
@@ -96,6 +98,83 @@ class SmartResolutionCalc:
     RETURN_NAMES = ("megapixels", "width", "height", "resolution", "preview", "latent", "info")
     FUNCTION = "calculate_dimensions"
     CATEGORY = "Smart Resolution"
+
+    @staticmethod
+    def get_image_dimensions_from_path(image_path):
+        """
+        Extract image dimensions from a file path using PIL.
+
+        Security: Validates path is within ComfyUI directories before reading.
+        Handles both full paths and filenames (searches in input directory).
+
+        Args:
+            image_path: Absolute path, relative path, or filename
+
+        Returns:
+            dict: {'width': int, 'height': int, 'success': bool, 'error': str}
+        """
+        try:
+            import folder_paths
+
+            # Check for directory traversal attempts early
+            if '..' in image_path:
+                logger.warning(f"Rejected path with traversal attempt: {image_path}")
+                return {
+                    'success': False,
+                    'error': 'Invalid path'
+                }
+
+            # If image_path is just a filename (no path separators), look in input directory
+            if not os.path.dirname(image_path):
+                # Just a filename - construct path in input directory
+                input_dir = folder_paths.get_input_directory()
+                abs_path = os.path.join(input_dir, image_path)
+                logger.debug(f"Filename detected, using input directory: {abs_path}")
+            else:
+                # Has directory components - normalize as absolute path
+                abs_path = os.path.abspath(image_path)
+
+            # Security: Only allow paths within ComfyUI directories
+            allowed_dirs = [
+                os.path.abspath(folder_paths.get_input_directory()),
+                os.path.abspath(folder_paths.get_output_directory()),
+                os.path.abspath(folder_paths.get_temp_directory()),
+            ]
+
+            # Check if path is within allowed directories
+            is_allowed = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+
+            if not is_allowed:
+                logger.warning(f"Rejected path outside allowed directories: {abs_path}")
+                return {
+                    'success': False,
+                    'error': 'Path outside allowed directories'
+                }
+
+            # Check file exists
+            if not os.path.exists(abs_path):
+                logger.debug(f"File not found: {abs_path}")
+                return {
+                    'success': False,
+                    'error': f'File not found: {os.path.basename(abs_path)}'
+                }
+
+            # Read image dimensions using PIL
+            with Image.open(abs_path) as img:
+                width, height = img.size
+                logger.debug(f"Successfully read dimensions: {width}×{height} from {abs_path}")
+                return {
+                    'width': width,
+                    'height': height,
+                    'success': True
+                }
+
+        except Exception as e:
+            logger.error(f"Error reading image dimensions: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
     def __init__(self):
         self.device = comfy.model_management.intermediate_device()
@@ -119,7 +198,8 @@ class SmartResolutionCalc:
         return f"{w_ratio}:{h_ratio}"
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
-                            custom_aspect_ratio="16:9", batch_size=1, scale=1.0, **kwargs):
+                            custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
+                            image=None, **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -145,6 +225,45 @@ class SmartResolutionCalc:
         logger.debug(f"Function called with standard args: aspect_ratio={aspect_ratio}, divisible_by={divisible_by}, custom_ratio={custom_ratio}")
         logger.debug(f"kwargs keys received: {list(kwargs.keys())}")
         logger.debug(f"kwargs contents: {kwargs}")
+
+        # Image input handling - extract dimensions from connected image
+        # image_mode widget: {on: bool, value: 0|1} - 0=AR Only, 1=Exact Dims
+        mode_info = None
+        override_warning = False
+        image_mode = kwargs.get('image_mode', {'on': True, 'value': 0})  # Default: enabled, AR Only
+        use_image = image_mode.get('on', True) if isinstance(image_mode, dict) else True
+        exact_dims = image_mode.get('value', 0) == 1 if isinstance(image_mode, dict) else False
+
+        if image is not None and use_image:
+            # Extract dimensions from first image in batch
+            # Image tensor shape: [batch, height, width, channels]
+            h, w = image.shape[1], image.shape[2]
+            actual_ar = self.format_aspect_ratio(w, h)
+
+            logger.debug(f"Image input detected: {w}×{h}, AR: {actual_ar}, mode={image_mode}")
+
+            if exact_dims:
+                # Check if manual WIDTH or HEIGHT settings will be overridden
+                manual_width = kwargs.get('dimension_width', {}).get('on', False)
+                manual_height = kwargs.get('dimension_height', {}).get('on', False)
+                if manual_width or manual_height:
+                    override_warning = True
+                    logger.debug(f"Override warning: Manual W/H settings detected but will be ignored in exact dims mode")
+
+                # Force Width+Height mode with extracted dimensions
+                # Apply scale to extracted dimensions
+                kwargs['dimension_width'] = {'on': True, 'value': int(w * scale)}
+                kwargs['dimension_height'] = {'on': True, 'value': int(h * scale)}
+                mode_info = f"From Image (Exact: {w}×{h})"
+                if scale != 1.0:
+                    mode_info += f" @ {scale}x"
+                logger.debug(f"Exact dimensions mode: forcing width={int(w * scale)}, height={int(h * scale)}")
+            else:
+                # Extract AR only, use with current megapixel calculation
+                custom_ratio = True
+                custom_aspect_ratio = actual_ar
+                mode_info = f"From Image (AR: {actual_ar})"
+                logger.debug(f"AR extraction mode: using AR {actual_ar} with existing megapixel logic")
 
         # Extract widget toggle states and values
         use_mp = kwargs.get('dimension_megapixel', {}).get('on', False)
@@ -267,6 +386,13 @@ class SmartResolutionCalc:
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
         info = f"Mode: {mode} | {info_detail} | Div: {div_info}"
+
+        # Prepend image source info if applicable
+        if mode_info:
+            info = f"{mode_info} | {info}"
+            # Add override warning if exact dims mode overrides manual settings
+            if override_warning:
+                info = f"⚠️ [Manual W/H Ignored] | {info}"
 
         # ALWAYS log final results
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")
