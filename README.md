@@ -134,25 +134,11 @@ Connect an IMAGE output to automatically extract dimensions or aspect ratio. See
 
 ### Aspect Ratio Presets
 
-**Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
-**Square** (1 ratio): 1:1
-**Landscape** (11 ratios): 3:2, 4:3, 5:3, 5:4, 7:5, 8:5, 9:7, 16:9, 19:9, 21:9, 32:9
+* **Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
+* **Square** (1 ratio): 1:1
+* **Landscape** (11 ratios): 3:2, 4:3, 5:3, 5:4, 7:5, 8:5, 9:7, 16:9, 19:9, 21:9, 32:9
 
 **Custom Ratios**: Enable "custom_ratio" and enter any ratio (e.g., "5:3")
-
-### Widget Controls
-
-Each dimension has a compact widget with toggle (LEFT) and value (RIGHT):
-
-**Toggle Switch**:
-- Green = ON (dimension used for calculation)
-- Gray = OFF (dimension ignored)
-- **Important**: Toggling OFF preserves the value
-
-**Number Controls**:
-- **[-]** button: Decrement (MP: -0.1, W/H: -8px)
-- **Value**: Click to type exact number
-- **[+]** button: Increment (MP: +0.1, W/H: +8px)
 
 ### Outputs
 
