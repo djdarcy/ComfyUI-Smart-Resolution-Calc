@@ -288,8 +288,26 @@ class SmartResolutionCalc:
 
         logger.debug(f"Aspect ratio: {ratio_str} (display: {ratio_display})")
 
-        # Parse aspect ratio
-        w_ratio, h_ratio = map(int, ratio_str.split(':'))
+        # Parse aspect ratio (supports floats for cinema ratios like 1.85:1, 2.39:1)
+        try:
+            parts = ratio_str.strip().split(':')
+            if len(parts) != 2:
+                raise ValueError(f"Invalid ratio format: '{ratio_str}' (expected 'width:height')")
+
+            w_ratio = float(parts[0])
+            h_ratio = float(parts[1])
+
+            # Validate positive values
+            if w_ratio <= 0:
+                raise ValueError(f"Width ratio must be positive, got: {w_ratio}")
+            if h_ratio <= 0:
+                raise ValueError(f"Height ratio must be positive, got: {h_ratio}")
+
+        except ValueError as e:
+            # Fallback to default aspect ratio on error
+            logger.error(f"Invalid custom aspect ratio '{ratio_str}': {e}")
+            print(f"[SmartResCalc] ERROR: {e}. Using default 16:9.")
+            w_ratio, h_ratio = 16.0, 9.0
 
         # Handle divisibility - "Exact" means no rounding (divisor=1)
         if divisible_by == "Exact":

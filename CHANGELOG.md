@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased - 0.2.0-beta]
 
+### Fixed
+- **Custom Aspect Ratio Float Parsing**: Fixed bug where custom aspect ratios with decimal values (e.g., "1.85:1", "2.39:1") threw `invalid literal for int()` error
+  - Changed parsing from `int()` to `float()` to support cinema-standard ratios
+  - Added validation for positive values (rejects negative, zero, or non-numeric input)
+  - Graceful fallback to 16:9 with error logging for invalid input
+  - Maintains backward compatibility with integer ratios ("16:9" still works)
+  - Fulfills tooltip promise: "fractional OK: '1:2.5', '16:9', '1.85:1'"
+
 ### Planned
 - Additional testing and polish
 - Shift+Click documentation for native widgets
