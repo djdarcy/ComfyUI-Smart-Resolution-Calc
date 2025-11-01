@@ -85,17 +85,17 @@ class SmartResolutionCalc:
                 }),
                 "image": ("IMAGE",),
                 # NEW: Image output parameters (hidden by JavaScript until output connected)
-                "output_image_mode": (["none", "empty", "transformed"], {
-                    "default": "none",
-                    "tooltip": "Image output mode: none=no output, empty=generated image, transformed=resize input"
+                "output_image_mode": (["auto", "empty", "transformed"], {
+                    "default": "auto",
+                    "tooltip": "Image output mode:\n• auto: Smart default (transformed if image input, empty otherwise)\n• empty: Generate new image with fill pattern\n• transformed: Resize input image to calculated dimensions"
                 }),
                 "fill_type": (["black", "white", "custom_color", "noise", "random"], {
                     "default": "black",
-                    "tooltip": "Fill pattern for empty images: solid colors, gaussian noise, or random pixels"
+                    "tooltip": "Fill pattern for empty images:\n• black: Solid black (#000000)\n• white: Solid white (#FFFFFF)\n• custom_color: Use fill_color hex value\n• noise: Gaussian noise (camera-like, centered around gray)\n• random: Uniform random pixels (TV static, full color range)"
                 }),
                 "fill_color": ("STRING", {
                     "default": "#808080",
-                    "tooltip": "Hex color for custom_color mode (e.g., #FF0000 for red)"
+                    "tooltip": "Hex color code for custom_color fill type.\nFormat: #RRGGBB (e.g., #FF0000=red, #00FF00=green, #0000FF=blue)\nWith or without # prefix. Only used when fill_type is 'custom_color'."
                 }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
@@ -420,13 +420,25 @@ class SmartResolutionCalc:
         preview = self.create_preview_image(w, h, resolution, ratio_display, mp)
 
         # ===== IMAGE OUTPUT (NEW) =====
+        # Smart defaults: "auto" mode selects based on input image presence
+        # Widgets hidden by JavaScript when IMAGE output not connected
+        actual_mode = output_image_mode
+        if output_image_mode == "auto":
+            # Apply smart defaults based on input image presence
+            if image is not None:
+                actual_mode = "transformed"
+                logger.debug("Smart default: 'auto' → 'transformed' (input image detected)")
+            else:
+                actual_mode = "empty"
+                logger.debug("Smart default: 'auto' → 'empty' (no input image)")
+
         # Generate actual image output based on mode
-        if output_image_mode == "empty":
+        if actual_mode == "empty":
             # Generate image with specified fill pattern at calculated dimensions
             output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
             logger.debug(f"Generated empty image: {w}×{h}, fill={fill_type}")
 
-        elif output_image_mode == "transformed":
+        elif actual_mode == "transformed":
             if image is not None:
                 # Transform input image to calculated dimensions
                 # Note: Use input image's batch size, not batch_size parameter
@@ -437,10 +449,9 @@ class SmartResolutionCalc:
                 logger.warning("Transform mode selected but no image connected, generating empty image")
                 output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
 
-        else:  # "none"
-            # No image output requested - use preview as safe fallback
-            # (prevents breaking nodes that expect IMAGE connection)
-            output_image = preview
+        else:  # Safety fallback for invalid mode values
+            logger.warning(f"Invalid output_image_mode '{actual_mode}', using empty image")
+            output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
 
         # ===== LATENT OUTPUT (UNCHANGED) =====
         latent = self.create_latent(w, h, batch_size)
