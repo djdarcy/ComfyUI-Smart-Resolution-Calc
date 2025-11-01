@@ -5,7 +5,31 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased - 0.3.0]
+## [Unreleased - 0.3.2]
+
+### Planned
+- **Color Button Widget**: Replace fill_color text input with button showing color preview
+  - Visual color preview as button background
+  - Inverted text color for legibility
+  - Single-click to open native color picker
+  - No focus-fighting issues
+
+## [0.3.1] - 2025-11-01
+
+### Added
+- **Debug Infrastructure**: Separate visibility logger for conditional widget features
+  - New debug channel: `SmartResCalc:Visibility`
+  - Globally accessible via `window.smartResCalcVisibilityLogger`
+  - Cleaned up verbose console.log statements
+
+### Experimental
+- **Double-Click Color Picker** (partially working)
+  - Detects double-click on fill_color text field
+  - Opens native browser color picker
+  - Known issue: Immediately dismissed due to text widget focus stealing
+  - Will be replaced with button widget in v0.3.2
+
+## [0.3.0] - 2025-11-01
 
 ### Added
 - **IMAGE Output**: New dedicated IMAGE output for generated/transformed images (separate from preview)
@@ -13,7 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Five fill patterns: black, white, custom_color, noise (Gaussian), random (uniform)
   - Smart defaults: "auto" mode selects transformed (with image input) or empty (without image input)
   - Conditional visibility: output parameters hidden when IMAGE output not connected
-  - Double-click color picker: visual hex color selection for custom_color fill
   - Breaking change: LATENT output moved from position 5 to 6 (IMAGE now at position 5)
 
 ### Technical (Backend)

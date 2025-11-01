@@ -72,6 +72,11 @@ class DebugLogger {
 }
 
 const logger = new DebugLogger('SmartResCalc');
+const visibilityLogger = new DebugLogger('SmartResCalc:Visibility');
+
+// Expose loggers globally for debugging
+window.smartResCalcLogger = logger;
+window.smartResCalcVisibilityLogger = visibilityLogger;
 
 /**
  * Toggle Behavior Modes
@@ -2619,44 +2624,61 @@ app.registerExtension({
                     const originalCallback = fillColorWidget.callback;
 
                     // Add custom mouse handler for double-click
+                    // Track clicks for double-click detection since event.detail doesn't work reliably
+                    let lastClickTime = 0;
+                    const DOUBLE_CLICK_MS = 400;
+
                     fillColorWidget.mouse = function(event, pos, node) {
-                        if (event.type === "pointerdown" && event.detail === 2) {
-                            // Double-click detected - open color picker
-                            const currentColor = fillColorWidget.value || "#808080";
+                        // LiteGraph sends "pointerup" events to widget mouse handlers
+                        if (event.type === "pointerup") {
+                            const now = Date.now();
+                            const timeSinceLastClick = now - lastClickTime;
 
-                            // Create hidden color input
-                            const colorInput = document.createElement("input");
-                            colorInput.type = "color";
-                            colorInput.value = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-                            colorInput.style.position = "absolute";
-                            colorInput.style.opacity = "0";
-                            colorInput.style.pointerEvents = "none";
-                            document.body.appendChild(colorInput);
+                            if (timeSinceLastClick < DOUBLE_CLICK_MS) {
+                                // Double-click detected - open color picker
+                                visibilityLogger.debug('Double-click detected on fill_color, opening color picker');
+                                lastClickTime = 0; // Reset
 
-                            // Handle color selection
-                            colorInput.addEventListener("change", (e) => {
-                                fillColorWidget.value = e.target.value;
-                                if (originalCallback) {
-                                    originalCallback.call(fillColorWidget, fillColorWidget.value);
-                                }
-                                node.setDirtyCanvas(true, true);
-                                document.body.removeChild(colorInput);
-                            });
+                                // Open color picker
+                                const currentColor = fillColorWidget.value || "#808080";
 
-                            // Handle cancellation
-                            colorInput.addEventListener("blur", () => {
-                                setTimeout(() => {
-                                    if (colorInput.parentNode) {
-                                        document.body.removeChild(colorInput);
+                                // Create hidden color input
+                                const colorInput = document.createElement("input");
+                                colorInput.type = "color";
+                                colorInput.value = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+                                colorInput.style.position = "absolute";
+                                colorInput.style.opacity = "0";
+                                colorInput.style.pointerEvents = "none";
+                                document.body.appendChild(colorInput);
+
+                                // Handle color selection
+                                colorInput.addEventListener("change", (e) => {
+                                    fillColorWidget.value = e.target.value;
+                                    if (originalCallback) {
+                                        originalCallback.call(fillColorWidget, fillColorWidget.value);
                                     }
-                                }, 100);
-                            });
+                                    node.setDirtyCanvas(true, true);
+                                    document.body.removeChild(colorInput);
+                                });
 
-                            // Open color picker
-                            colorInput.click();
-                            colorInput.focus();
+                                // Handle cancellation
+                                colorInput.addEventListener("blur", () => {
+                                    setTimeout(() => {
+                                        if (colorInput.parentNode) {
+                                            document.body.removeChild(colorInput);
+                                        }
+                                    }, 100);
+                                });
 
-                            return true; // Event handled
+                                // Open color picker
+                                colorInput.click();
+                                colorInput.focus();
+
+                                return true; // Event handled
+                            } else {
+                                // First click - record time
+                                lastClickTime = now;
+                            }
                         }
                         return false; // Event not handled
                     };
@@ -2664,27 +2686,19 @@ app.registerExtension({
 
                 // Function to update widget visibility based on image output connection
                 this.updateImageOutputVisibility = function() {
-                    console.log('DEBUG: updateImageOutputVisibility called');
-                    console.log('DEBUG: this.outputs:', this.outputs);
-                    console.log('DEBUG: this.outputs.length:', this.outputs?.length);
-
                     // Ensure outputs array exists and has enough elements
                     if (!this.outputs || this.outputs.length < 6) {
-                        console.warn('DEBUG: Outputs not ready yet, outputs:', this.outputs);
-                        return;
+                        return; // Outputs not ready yet
                     }
 
                     // Check if image output (position 5) has connections
                     const imageOutput = this.outputs[5]; // Position 5 = "image" output
-                    console.log('DEBUG: imageOutput (position 5):', imageOutput);
-                    console.log('DEBUG: imageOutput.links:', imageOutput?.links);
 
-                    // Filter out null/undefined links - array might contain nulls
+                    // Filter out null/undefined links - array might contain nulls after disconnect
                     const hasConnection = imageOutput && imageOutput.links &&
                                         imageOutput.links.filter(link => link != null).length > 0;
-                    console.log('DEBUG: hasConnection:', hasConnection);
 
-                    logger.debug(`Image output connected: ${hasConnection}`);
+                    visibilityLogger.debug(`Image output connected: ${hasConnection}`);
 
                     // Show/hide widgets based on connection status
                     Object.keys(this.imageOutputWidgets).forEach(key => {
@@ -2692,8 +2706,6 @@ app.registerExtension({
                         if (widget) {
                             const currentIndex = this.widgets.indexOf(widget);
                             const isCurrentlyVisible = currentIndex !== -1;
-
-                            console.log(`DEBUG: Widget ${key} - visible: ${isCurrentlyVisible}, shouldShow: ${hasConnection}, value: ${widget.value}`);
 
                             if (hasConnection && !isCurrentlyVisible) {
                                 // Show widget - add back to widgets array at original position
@@ -2705,14 +2717,14 @@ app.registerExtension({
                                 }
                                 this.widgets.splice(targetIndex, 0, widget);
                                 widget.type = widget.origType || "combo";
-                                console.log(`DEBUG: Widget ${key} - shown at index ${targetIndex}, restored value: ${widget.value}`);
+                                visibilityLogger.debug(`Widget ${key} shown, value: ${widget.value}`);
                             } else if (!hasConnection && isCurrentlyVisible) {
                                 // Hide widget - save current value (but only if it's a primitive, not object)
                                 if (typeof widget.value !== 'object') {
                                     this.imageOutputWidgetValues[key] = widget.value;
-                                    console.log(`DEBUG: Widget ${key} - hidden (removed from array), saved value: ${widget.value}`);
+                                    visibilityLogger.debug(`Widget ${key} hidden, saved value: ${widget.value}`);
                                 } else {
-                                    console.warn(`DEBUG: Widget ${key} - value is object, not saving. Keeping default: ${this.imageOutputWidgetValues[key]}`);
+                                    visibilityLogger.warn(`Widget ${key} value is object, using default: ${this.imageOutputWidgetValues[key]}`);
                                 }
                                 this.widgets.splice(currentIndex, 1);
                             }
@@ -2725,23 +2737,19 @@ app.registerExtension({
 
                 // Initially hide widgets - delay until outputs are ready
                 setTimeout(() => {
-                    console.log('DEBUG: Initial visibility check (delayed)');
                     this.updateImageOutputVisibility();
                 }, 100);
 
                 // Monitor connection changes - store bound function on instance
                 const originalOnConnectionsChange = this.onConnectionsChange;
                 this.onConnectionsChange = function(type, index, connected, link_info) {
-                    console.log(`DEBUG: onConnectionsChange called - type: ${type}, index: ${index}, connected: ${connected}`);
-
                     // Call original handler
                     if (originalOnConnectionsChange) {
                         originalOnConnectionsChange.apply(this, arguments);
                     }
 
-                    // If image output (position 5) connection changed (connect OR disconnect), update visibility
+                    // If image output (position 5) connection changed, update visibility
                     if (type === LiteGraph.OUTPUT && index === 5) {
-                        console.log(`DEBUG: Image output ${connected ? 'connected' : 'disconnected'}, calling updateImageOutputVisibility`);
                         this.updateImageOutputVisibility();
                     }
                 };
@@ -2749,8 +2757,6 @@ app.registerExtension({
                 // Also monitor onConnectionsRemove for disconnect events (fallback)
                 const originalOnConnectionsRemove = this.onConnectionsRemove;
                 this.onConnectionsRemove = function(type, index, link_info) {
-                    console.log(`DEBUG: onConnectionsRemove called - type: ${type}, index: ${index}`);
-
                     // Call original handler
                     if (originalOnConnectionsRemove) {
                         originalOnConnectionsRemove.apply(this, arguments);
@@ -2758,13 +2764,13 @@ app.registerExtension({
 
                     // If image output (position 5) was disconnected, update visibility
                     if (type === LiteGraph.OUTPUT && index === 5) {
-                        console.log('DEBUG: Image output link removed, calling updateImageOutputVisibility');
                         this.updateImageOutputVisibility();
                     }
                 };
 
                 // Periodic check for connection status changes (fallback for when events don't fire)
-                // This handles disconnect events that aren't captured by onConnectionsChange
+                // NOTE: This is necessary because LiteGraph disconnect events don't fire reliably
+                // The 500ms polling is acceptable UX-wise and handles the edge case
                 this._lastImageConnectionState = false;
                 this._connectionCheckInterval = setInterval(() => {
                     if (!this.outputs || this.outputs.length < 6) return;
@@ -2774,7 +2780,7 @@ app.registerExtension({
                                        imageOutput.links.filter(link => link != null).length > 0;
 
                     if (currentState !== this._lastImageConnectionState) {
-                        console.log(`DEBUG: Periodic check detected connection change: ${this._lastImageConnectionState} → ${currentState}`);
+                        visibilityLogger.debug(`Image connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
                         this._lastImageConnectionState = currentState;
                         this.updateImageOutputVisibility();
                     }
