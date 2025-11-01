@@ -1,11 +1,11 @@
 # ComfyUI Smart Resolution Calculator
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-orange.svg)](https://github.com/comfyanonymous/ComfyUI)
+[![ComfyUI Registry](https://img.shields.io/badge/ComfyUI-Registry-green.svg)](https://registry.comfy.org/publishers/djdarcy/nodes/comfyui-smart-resolution-calc)
 [![GitHub release](https://img.shields.io/github/v/release/djdarcy/ComfyUI-Smart-Resolution-Calc?include_prereleases&label=version)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Flexible resolution and latent generation for ComfyUI with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
+Flexible resolution and latent generation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
 
 ## Overview
 
@@ -13,7 +13,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
-*Example workflow showing the Smart Resolution Calculator with HEIGHT enabled, calculating width automatically from aspect ratio, and outputting to ClownsharkKSampler.*
+*Example workflow showing the Smart Resolution Calculator with image input (AR Only mode), HEIGHT enabled at 1200, SCALE at 1.10x, calculating width from 1:1 aspect ratio, and outputting 1320×1320 to ClownsharkKSampler.*
 
 ## Features
 
@@ -21,13 +21,13 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 - **Interactive tooltips** - Hover over widget labels for quick help, extended explanations, and links to documentation
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
+- **Scale multiplier** - Scale dimensions up/down (0-10x) with custom widget and real-time preview
 - **Compact custom widgets** - rgthree-style controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
 - **Visual preview** - See exact dimensions and aspect ratio before generation
 - **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64)
-- **Scale multiplier** - Asymmetric slider with 1.0x visual center for precise scaling
 - **Workflow persistence** - Widget states save/load with workflows
 
 ## Prerequisites
@@ -74,7 +74,7 @@ Then restart ComfyUI or use **Manager → Refresh Node Definitions**.
 
 1. Add **Smart Resolution Calculator** to your workflow
 2. Select an aspect ratio (default: 3:4 Golden Ratio)
-3. **Enable the dimensions you know** by clicking toggle switches
+3. **Enable the dimensions you know/want** by clicking toggle switches
 4. The node automatically calculates missing values
 5. Check the **info** output to verify the calculation mode
 6. Connect **latent** output to your KSampler
@@ -134,25 +134,11 @@ Connect an IMAGE output to automatically extract dimensions or aspect ratio. See
 
 ### Aspect Ratio Presets
 
-**Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
-**Square** (1 ratio): 1:1
-**Landscape** (11 ratios): 3:2, 4:3, 5:3, 5:4, 7:5, 8:5, 9:7, 16:9, 19:9, 21:9, 32:9
+* **Portrait** (11 ratios): 2:3, 3:4 (default), 3:5, 4:5, 5:7, 5:8, 7:9, 9:16, 9:19, 9:21, 9:32
+* **Square** (1 ratio): 1:1
+* **Landscape** (11 ratios): 3:2, 4:3, 5:3, 5:4, 7:5, 8:5, 9:7, 16:9, 19:9, 21:9, 32:9
 
 **Custom Ratios**: Enable "custom_ratio" and enter any ratio (e.g., "5:3")
-
-### Widget Controls
-
-Each dimension has a compact widget with toggle (LEFT) and value (RIGHT):
-
-**Toggle Switch**:
-- Green = ON (dimension used for calculation)
-- Gray = OFF (dimension ignored)
-- **Important**: Toggling OFF preserves the value
-
-**Number Controls**:
-- **[-]** button: Decrement (MP: -0.1, W/H: -8px)
-- **Value**: Click to type exact number
-- **[+]** button: Increment (MP: +0.1, W/H: +8px)
 
 ### Outputs
 
@@ -288,7 +274,7 @@ Custom JavaScript widgets with compact 24px height design:
 - `serialize_widgets = true` enables workflow persistence
 - Data structure: `{on: boolean, value: number}`
 
-**Critical**: ComfyUI requires both `INPUT_TYPES["hidden"]` declarations AND `serialize_widgets = true` for proper widget data flow. One alone is insufficient.
+**NOTE**: ComfyUI requires both `INPUT_TYPES["hidden"]` declarations AND `serialize_widgets = true` for proper widget data flow. One alone is insufficient.
 
 ## Acknowledgments
 
