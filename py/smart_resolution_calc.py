@@ -2,6 +2,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import torch
 import comfy.model_management
+import comfy.utils
 import logging
 import os
 from math import gcd
@@ -83,6 +84,19 @@ class SmartResolutionCalc:
                     "display": "slider"
                 }),
                 "image": ("IMAGE",),
+                # NEW: Image output parameters (hidden by JavaScript until output connected)
+                "output_image_mode": (["none", "empty", "transformed"], {
+                    "default": "none",
+                    "tooltip": "Image output mode: none=no output, empty=generated image, transformed=resize input"
+                }),
+                "fill_type": (["black", "white", "custom_color", "noise", "random"], {
+                    "default": "black",
+                    "tooltip": "Fill pattern for empty images: solid colors, gaussian noise, or random pixels"
+                }),
+                "fill_color": ("STRING", {
+                    "default": "#808080",
+                    "tooltip": "Hex color for custom_color mode (e.g., #FF0000 for red)"
+                }),
             },
             # Custom widgets added via JavaScript - declare in hidden so ComfyUI passes them to Python
             # Widget data structure: {'on': bool, 'value': number}
@@ -94,8 +108,8 @@ class SmartResolutionCalc:
             },
         }
 
-    RETURN_TYPES = ("FLOAT", "INT", "INT", "STRING", "IMAGE", "LATENT", "STRING")
-    RETURN_NAMES = ("megapixels", "width", "height", "resolution", "preview", "latent", "info")
+    RETURN_TYPES = ("FLOAT", "INT", "INT", "STRING", "IMAGE", "IMAGE", "LATENT", "STRING")
+    RETURN_NAMES = ("megapixels", "width", "height", "resolution", "preview", "image", "latent", "info")
     FUNCTION = "calculate_dimensions"
     CATEGORY = "Smart Resolution"
 
@@ -199,7 +213,8 @@ class SmartResolutionCalc:
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
-                            image=None, **kwargs):
+                            image=None, output_image_mode="none", fill_type="black",
+                            fill_color="#808080", **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
 
@@ -398,7 +413,36 @@ class SmartResolutionCalc:
 
         # Generate outputs
         resolution = f"{w} x {h}"
+
+        # ===== PREVIEW OUTPUT (UNCHANGED) =====
+        # Always generate preview grid visualization (1024x1024)
+        # This output is NEVER modified - maintains exact current behavior
         preview = self.create_preview_image(w, h, resolution, ratio_display, mp)
+
+        # ===== IMAGE OUTPUT (NEW) =====
+        # Generate actual image output based on mode
+        if output_image_mode == "empty":
+            # Generate image with specified fill pattern at calculated dimensions
+            output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
+            logger.debug(f"Generated empty image: {w}×{h}, fill={fill_type}")
+
+        elif output_image_mode == "transformed":
+            if image is not None:
+                # Transform input image to calculated dimensions
+                # Note: Use input image's batch size, not batch_size parameter
+                output_image = self.transform_image(image, w, h)
+                logger.debug(f"Transformed input image to {w}×{h}")
+            else:
+                # No image connected - fallback to empty image with current fill settings
+                logger.warning("Transform mode selected but no image connected, generating empty image")
+                output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
+
+        else:  # "none"
+            # No image output requested - use preview as safe fallback
+            # (prevents breaking nodes that expect IMAGE connection)
+            output_image = preview
+
+        # ===== LATENT OUTPUT (UNCHANGED) =====
         latent = self.create_latent(w, h, batch_size)
 
         # Format divisibility info
@@ -416,7 +460,106 @@ class SmartResolutionCalc:
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")
         logger.debug(f"Returning: mp={mp}, w={w}, h={h}, resolution={resolution}, info={info}")
 
-        return (mp, w, h, resolution, preview, latent, info)
+        # Return: (megapixels, width, height, resolution, PREVIEW, IMAGE, latent, info)
+        return (mp, w, h, resolution, preview, output_image, latent, info)
+
+    def create_empty_image(
+        self,
+        width: int,
+        height: int,
+        fill_type: str = "black",
+        fill_color: str = "#808080",
+        batch_size: int = 1
+    ) -> torch.Tensor:
+        """
+        Create empty image with specified fill pattern.
+
+        Args:
+            width: Image width in pixels
+            height: Image height in pixels
+            fill_type: Fill pattern - "black", "white", "custom_color", "noise", "random"
+            fill_color: Hex color string for "custom_color" mode (e.g., "#FF0000")
+            batch_size: Number of images in batch
+
+        Returns:
+            Tensor of shape [batch_size, height, width, 3] with values 0.0-1.0
+        """
+        # Create base tensor
+        if fill_type == "black":
+            # All zeros (black)
+            image = torch.zeros((batch_size, height, width, 3))
+
+        elif fill_type == "white":
+            # All ones (white)
+            image = torch.ones((batch_size, height, width, 3))
+
+        elif fill_type == "custom_color":
+            # Parse hex color to RGB (0.0-1.0 range)
+            try:
+                color_hex = fill_color.strip()
+                if not color_hex.startswith('#'):
+                    color_hex = '#' + color_hex
+
+                r = int(color_hex[1:3], 16) / 255.0
+                g = int(color_hex[3:5], 16) / 255.0
+                b = int(color_hex[5:7], 16) / 255.0
+            except (ValueError, IndexError):
+                # Fallback to gray on invalid color
+                logger.warning(f"Invalid hex color '{fill_color}', using gray")
+                r, g, b = 0.5, 0.5, 0.5
+
+            # Fill with custom color
+            image = torch.zeros((batch_size, height, width, 3))
+            image[:, :, :, 0] = r
+            image[:, :, :, 1] = g
+            image[:, :, :, 2] = b
+
+        elif fill_type == "noise":
+            # Gaussian noise (mean=0.5, std=0.1)
+            image = torch.randn((batch_size, height, width, 3)) * 0.1 + 0.5
+            image = torch.clamp(image, 0.0, 1.0)
+
+        elif fill_type == "random":
+            # Uniform random values [0.0, 1.0]
+            image = torch.rand((batch_size, height, width, 3))
+
+        else:
+            # Fallback to black for unknown types
+            logger.warning(f"Unknown fill_type '{fill_type}', using black")
+            image = torch.zeros((batch_size, height, width, 3))
+
+        return image
+
+    def transform_image(self, image: torch.Tensor, target_width: int, target_height: int) -> torch.Tensor:
+        """
+        Transform input image to target dimensions using bilinear interpolation.
+
+        Args:
+            image: Input tensor [batch, height, width, channels]
+            target_width: Target width in pixels
+            target_height: Target height in pixels
+
+        Returns:
+            Transformed tensor [batch, target_height, target_width, channels]
+        """
+        # Convert NHWC -> NCHW for interpolate
+        samples = image.movedim(-1, 1)
+
+        # Use ComfyUI's standard upscale function
+        # Method: "bilinear" (fast, good quality, general purpose)
+        # Crop: "disabled" (scale to fit, no cropping)
+        output = comfy.utils.common_upscale(
+            samples,
+            target_width,
+            target_height,
+            "bilinear",
+            "disabled"
+        )
+
+        # Convert back NCHW -> NHWC
+        output = output.movedim(1, -1)
+
+        return output
 
     def create_preview_image(self, width, height, resolution, ratio_display, megapixels):
         """

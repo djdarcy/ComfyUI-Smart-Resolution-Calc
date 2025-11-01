@@ -2579,6 +2579,67 @@ app.registerExtension({
                     ctx.restore();
                 };
 
+                // ===== NEW: Conditional visibility for image output parameters =====
+                // Hide image output parameters until "image" output (position 5) is connected
+
+                // Store references to image output widgets
+                this.imageOutputWidgets = {
+                    output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
+                    fill_type: this.widgets.find(w => w.name === "fill_type"),
+                    fill_color: this.widgets.find(w => w.name === "fill_color")
+                };
+
+                // Store original widget types for restore
+                Object.keys(this.imageOutputWidgets).forEach(key => {
+                    const widget = this.imageOutputWidgets[key];
+                    if (widget) {
+                        widget.origType = widget.type;
+                    }
+                });
+
+                // Function to update widget visibility based on image output connection
+                this.updateImageOutputVisibility = function() {
+                    // Check if image output (position 5) has connections
+                    const imageOutput = this.outputs[5]; // Position 5 = "image" output
+                    const hasConnection = imageOutput && imageOutput.links && imageOutput.links.length > 0;
+
+                    logger.debug(`Image output connected: ${hasConnection}`);
+
+                    // Show/hide widgets based on connection status
+                    Object.keys(this.imageOutputWidgets).forEach(key => {
+                        const widget = this.imageOutputWidgets[key];
+                        if (widget) {
+                            if (hasConnection) {
+                                // Show widget - restore original type
+                                widget.type = widget.origType || "combo";
+                            } else {
+                                // Hide widget - convert to hidden type
+                                widget.type = "converted-widget";
+                            }
+                        }
+                    });
+
+                    // Resize node to accommodate shown/hidden widgets
+                    this.setSize(this.computeSize());
+                };
+
+                // Initially hide widgets
+                this.updateImageOutputVisibility();
+
+                // Monitor connection changes
+                const originalOnConnectionsChange = nodeType.prototype.onConnectionsChange;
+                nodeType.prototype.onConnectionsChange = function(type, index, connected, link_info) {
+                    // Call original handler
+                    if (originalOnConnectionsChange) {
+                        originalOnConnectionsChange.apply(this, arguments);
+                    }
+
+                    // If image output (position 5) connection changed, update visibility
+                    if (type === LiteGraph.OUTPUT && index === 5) {
+                        this.updateImageOutputVisibility();
+                    }
+                };
+
                 return r;
             };
 
