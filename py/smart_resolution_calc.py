@@ -111,7 +111,7 @@ class SmartResolutionCalc:
     RETURN_TYPES = ("FLOAT", "INT", "INT", "STRING", "IMAGE", "IMAGE", "LATENT", "STRING")
     RETURN_NAMES = ("megapixels", "width", "height", "resolution", "preview", "image", "latent", "info")
     FUNCTION = "calculate_dimensions"
-    CATEGORY = "Smart Resolution"
+    CATEGORY = "DazzleNodes"
 
     @staticmethod
     def get_image_dimensions_from_path(image_path):

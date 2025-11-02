@@ -5,7 +5,38 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.2] - 2025-11-01
+## [0.3.3] - 2025-11-02 (Work in Progress - Known Bugs)
+
+### Added
+- **DazzleNodes Compatibility**: Dynamic import support for multi-package loading
+  - Auto-detects import path depth using import.meta.url
+  - Works in standalone mode: `/extensions/smart-resolution-calc/`
+  - Works in DazzleNodes mode: `/extensions/DazzleNodes/smart-resolution-calc/`
+  - Wrapped extension in async IIFE with Promise-based imports
+
+- **Color Picker Button Widget**: Dedicated button for visual color selection
+  - Separate "🎨 Pick Color" button widget (not hybrid text widget)
+  - Custom draw shows color preview with contrasting text
+  - Updates fill_color text widget when color selected
+  - Inserted directly after fill_color widget for logical grouping
+
+### Changed
+- **Category**: Changed from "Smart Resolution" to "DazzleNodes" for package grouping
+
+### Known Issues (DO NOT RELEASE)
+- ⚠️ Color picker positioning BROKEN - appears in wrong location
+- ⚠️ Picker may not appear consistently
+- ⚠️ Position calculation based on estimates (80px header + 30px/widget)
+- ⚠️ Does not account for actual widget heights or node transformations
+- **Next**: Fix positioning algorithm or implement alternative approach
+
+### Technical
+- Dynamic import helper: importComfyCore() with path depth calculation
+- Color picker button uses fixed positioning with calculated coordinates
+- Debug logging via visibilityLogger for click events
+- Widget splice insertion maintains logical order
+
+## [0.3.2] - 2025-11-01 (Non-functional release)
 
 ### Changed
 - **Color Button Widget**: Replaced fill_color text input with button showing color preview

@@ -1,12 +1,37 @@
-import { app } from "../../scripts/app.js";
-import { TOOLTIP_CONTENT } from "./tooltip_content.js";
-
 /**
  * Smart Resolution Calculator - Compact Custom Widgets
  *
  * rgthree-style compact widgets with toggle on LEFT, value on RIGHT
  * Reduced spacing and height for professional, space-efficient layout
+ *
+ * COMPATIBILITY NOTE:
+ * Uses dynamic imports with auto-depth detection to work in both:
+ * - Standalone mode: /extensions/smart-resolution-calc/
+ * - DazzleNodes mode: /extensions/DazzleNodes/smart-resolution-calc/
  */
+
+// Dynamic import helper for standalone vs DazzleNodes compatibility (Option A: Inline)
+async function importComfyCore() {
+    const currentPath = import.meta.url;
+    const urlParts = new URL(currentPath).pathname.split('/').filter(p => p);
+    const depth = urlParts.length; // Each part requires one ../ to traverse up
+    const prefix = '../'.repeat(depth);
+
+    const [appModule, tooltipModule] = await Promise.all([
+        import(`${prefix}scripts/app.js`),
+        import('./tooltip_content.js')
+    ]);
+
+    return {
+        app: appModule.app,
+        TOOLTIP_CONTENT: tooltipModule.TOOLTIP_CONTENT
+    };
+}
+
+// Initialize extension with dynamic imports
+(async () => {
+    // Import ComfyUI app and local tooltip content
+    const { app, TOOLTIP_CONTENT } = await importComfyCore();
 
 /**
  * Debug Logger - Multi-level logging
@@ -2617,17 +2642,10 @@ app.registerExtension({
                     }
                 });
 
-                // ===== Color button widget for fill_color =====
-                // Replace text widget with button showing color preview
+                // ===== Color picker button widget =====
+                // Create a dedicated button widget for color picking, separate from text widget
                 const fillColorWidget = this.imageOutputWidgets.fill_color;
                 if (fillColorWidget) {
-                    // Convert to button type
-                    fillColorWidget.type = "button";
-                    fillColorWidget.origType = "button";
-
-                    // Store original callback
-                    const originalCallback = fillColorWidget.callback;
-
                     // Helper function to calculate contrasting text color
                     const getContrastColor = (hexColor) => {
                         // Remove # if present
@@ -2642,53 +2660,42 @@ app.registerExtension({
                         return luminance > 0.5 ? '#000000' : '#FFFFFF';
                     };
 
-                    // Custom draw method to show color preview with text
-                    fillColorWidget.draw = function(ctx, node, width, y, height) {
-                        const currentColor = this.value || "#808080";
-                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-                        const contrastColor = getContrastColor(normalizedColor);
-
-                        // Draw button background with current color
-                        ctx.fillStyle = normalizedColor;
-                        ctx.fillRect(0, y, width, height);
-
-                        // Draw border
-                        ctx.strokeStyle = "#666";
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(0, y, width, height);
-
-                        // Draw text (hex value) in contrasting color
-                        ctx.fillStyle = contrastColor;
-                        ctx.font = "14px monospace";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(normalizedColor.toUpperCase(), width / 2, y + height / 2);
-                    };
-
-                    // Click handler to open color picker
-                    fillColorWidget.callback = function() {
-                        const currentColor = this.value || "#808080";
+                    // Create button widget for color picker
+                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, function() {
+                        const currentColor = fillColorWidget.value || "#808080";
                         const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
 
-                        // Create hidden color input
+                        visibilityLogger.debug('Color picker button clicked, opening picker');
+
+                        // Calculate button position on screen for better color picker placement
+                        const nodePos = this.pos;
+                        const buttonIndex = this.widgets.indexOf(colorPickerButton);
+
+                        // Estimate button Y position (approximate)
+                        let buttonY = nodePos[1] + 80; // Node header height
+                        for (let i = 0; i < buttonIndex; i++) {
+                            buttonY += 30; // Approximate widget height
+                        }
+
+                        // Create color input positioned near the button
                         const colorInput = document.createElement("input");
                         colorInput.type = "color";
                         colorInput.value = normalizedColor;
-                        colorInput.style.position = "absolute";
-                        colorInput.style.opacity = "0";
-                        colorInput.style.pointerEvents = "none";
+                        colorInput.style.position = "fixed"; // Use fixed positioning
+                        colorInput.style.left = (nodePos[0] + 50) + "px"; // Position near node
+                        colorInput.style.top = buttonY + "px";
+                        colorInput.style.width = "50px";
+                        colorInput.style.height = "50px";
+                        colorInput.style.border = "none";
+                        colorInput.style.opacity = "0"; // Still invisible, but positioned
+                        colorInput.style.pointerEvents = "auto"; // Allow interaction
                         document.body.appendChild(colorInput);
 
                         // Handle color selection
                         colorInput.addEventListener("change", (e) => {
-                            this.value = e.target.value;
-                            if (originalCallback) {
-                                originalCallback.call(this, this.value);
-                            }
-                            // Force redraw
-                            if (app && app.graph) {
-                                app.graph.setDirtyCanvas(true, true);
-                            }
+                            fillColorWidget.value = e.target.value;
+                            this.setDirtyCanvas(true, true);
+                            visibilityLogger.debug(`Color selected: ${e.target.value}`);
                             document.body.removeChild(colorInput);
                         });
 
@@ -2697,6 +2704,7 @@ app.registerExtension({
                             setTimeout(() => {
                                 if (colorInput.parentNode) {
                                     document.body.removeChild(colorInput);
+                                    visibilityLogger.debug('Color picker cancelled');
                                 }
                             }, 100);
                         });
@@ -2704,7 +2712,40 @@ app.registerExtension({
                         // Open color picker
                         colorInput.click();
                         colorInput.focus();
+                    });
+
+                    // Custom draw to show current color
+                    colorPickerButton.draw = function(ctx, node, width, y, height) {
+                        const currentColor = fillColorWidget.value || "#808080";
+                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+                        const contrastColor = getContrastColor(normalizedColor);
+
+                        // Draw color preview background
+                        ctx.fillStyle = normalizedColor;
+                        ctx.fillRect(0, y, width, height);
+
+                        // Draw border
+                        ctx.strokeStyle = "#666";
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(0, y, width, height);
+
+                        // Draw text: emoji + hex value
+                        ctx.fillStyle = contrastColor;
+                        ctx.font = "12px monospace";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, width / 2, y + height / 2);
                     };
+
+                    // Insert button right after fill_color widget (not at end)
+                    const fillColorIndex = this.widgets.indexOf(fillColorWidget);
+                    this.widgets.splice(fillColorIndex + 1, 0, colorPickerButton);
+
+                    // Add button to image output widgets list
+                    this.imageOutputWidgets.color_picker_button = colorPickerButton;
+
+                    // Store original widget index for button
+                    this.imageOutputWidgetIndices.color_picker_button = fillColorIndex + 1;
                 }
 
                 // Function to update widget visibility based on image output connection
@@ -3121,3 +3162,8 @@ app.registerExtension({
 });
 
 console.log("[SmartResCalc] Compact widgets loaded (rgthree-style) - Debug:", logger.enabled);
+
+})().catch(error => {
+    console.error("[SmartResCalc] Failed to load extension:", error);
+    console.error("[SmartResCalc] This may be due to incorrect import paths. Check browser console for details.");
+});
