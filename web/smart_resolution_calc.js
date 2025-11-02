@@ -2617,70 +2617,93 @@ app.registerExtension({
                     }
                 });
 
-                // ===== Double-click color picker for fill_color widget =====
+                // ===== Color button widget for fill_color =====
+                // Replace text widget with button showing color preview
                 const fillColorWidget = this.imageOutputWidgets.fill_color;
                 if (fillColorWidget) {
+                    // Convert to button type
+                    fillColorWidget.type = "button";
+                    fillColorWidget.origType = "button";
+
                     // Store original callback
                     const originalCallback = fillColorWidget.callback;
 
-                    // Add custom mouse handler for double-click
-                    // Track clicks for double-click detection since event.detail doesn't work reliably
-                    let lastClickTime = 0;
-                    const DOUBLE_CLICK_MS = 400;
+                    // Helper function to calculate contrasting text color
+                    const getContrastColor = (hexColor) => {
+                        // Remove # if present
+                        const hex = hexColor.replace('#', '');
+                        // Convert to RGB
+                        const r = parseInt(hex.substr(0, 2), 16);
+                        const g = parseInt(hex.substr(2, 2), 16);
+                        const b = parseInt(hex.substr(4, 2), 16);
+                        // Calculate luminance
+                        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                        // Return black for light colors, white for dark colors
+                        return luminance > 0.5 ? '#000000' : '#FFFFFF';
+                    };
 
-                    fillColorWidget.mouse = function(event, pos, node) {
-                        // LiteGraph sends "pointerup" events to widget mouse handlers
-                        if (event.type === "pointerup") {
-                            const now = Date.now();
-                            const timeSinceLastClick = now - lastClickTime;
+                    // Custom draw method to show color preview with text
+                    fillColorWidget.draw = function(ctx, node, width, y, height) {
+                        const currentColor = this.value || "#808080";
+                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+                        const contrastColor = getContrastColor(normalizedColor);
 
-                            if (timeSinceLastClick < DOUBLE_CLICK_MS) {
-                                // Double-click detected - open color picker
-                                visibilityLogger.debug('Double-click detected on fill_color, opening color picker');
-                                lastClickTime = 0; // Reset
+                        // Draw button background with current color
+                        ctx.fillStyle = normalizedColor;
+                        ctx.fillRect(0, y, width, height);
 
-                                // Open color picker
-                                const currentColor = fillColorWidget.value || "#808080";
+                        // Draw border
+                        ctx.strokeStyle = "#666";
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(0, y, width, height);
 
-                                // Create hidden color input
-                                const colorInput = document.createElement("input");
-                                colorInput.type = "color";
-                                colorInput.value = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-                                colorInput.style.position = "absolute";
-                                colorInput.style.opacity = "0";
-                                colorInput.style.pointerEvents = "none";
-                                document.body.appendChild(colorInput);
+                        // Draw text (hex value) in contrasting color
+                        ctx.fillStyle = contrastColor;
+                        ctx.font = "14px monospace";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(normalizedColor.toUpperCase(), width / 2, y + height / 2);
+                    };
 
-                                // Handle color selection
-                                colorInput.addEventListener("change", (e) => {
-                                    fillColorWidget.value = e.target.value;
-                                    if (originalCallback) {
-                                        originalCallback.call(fillColorWidget, fillColorWidget.value);
-                                    }
-                                    node.setDirtyCanvas(true, true);
-                                    document.body.removeChild(colorInput);
-                                });
+                    // Click handler to open color picker
+                    fillColorWidget.callback = function() {
+                        const currentColor = this.value || "#808080";
+                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
 
-                                // Handle cancellation
-                                colorInput.addEventListener("blur", () => {
-                                    setTimeout(() => {
-                                        if (colorInput.parentNode) {
-                                            document.body.removeChild(colorInput);
-                                        }
-                                    }, 100);
-                                });
+                        // Create hidden color input
+                        const colorInput = document.createElement("input");
+                        colorInput.type = "color";
+                        colorInput.value = normalizedColor;
+                        colorInput.style.position = "absolute";
+                        colorInput.style.opacity = "0";
+                        colorInput.style.pointerEvents = "none";
+                        document.body.appendChild(colorInput);
 
-                                // Open color picker
-                                colorInput.click();
-                                colorInput.focus();
-
-                                return true; // Event handled
-                            } else {
-                                // First click - record time
-                                lastClickTime = now;
+                        // Handle color selection
+                        colorInput.addEventListener("change", (e) => {
+                            this.value = e.target.value;
+                            if (originalCallback) {
+                                originalCallback.call(this, this.value);
                             }
-                        }
-                        return false; // Event not handled
+                            // Force redraw
+                            if (app && app.graph) {
+                                app.graph.setDirtyCanvas(true, true);
+                            }
+                            document.body.removeChild(colorInput);
+                        });
+
+                        // Handle cancellation
+                        colorInput.addEventListener("blur", () => {
+                            setTimeout(() => {
+                                if (colorInput.parentNode) {
+                                    document.body.removeChild(colorInput);
+                                }
+                            }, 100);
+                        });
+
+                        // Open color picker
+                        colorInput.click();
+                        colorInput.focus();
                     };
                 }
 

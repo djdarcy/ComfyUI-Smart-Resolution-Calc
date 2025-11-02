@@ -5,14 +5,20 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased - 0.3.2]
+## [0.3.2] - 2025-11-01
 
-### Planned
-- **Color Button Widget**: Replace fill_color text input with button showing color preview
+### Changed
+- **Color Button Widget**: Replaced fill_color text input with button showing color preview
   - Visual color preview as button background
-  - Inverted text color for legibility
-  - Single-click to open native color picker
-  - No focus-fighting issues
+  - Automatic text color inversion for legibility (black text on light colors, white on dark)
+  - Single-click to open native browser color picker
+  - No focus-fighting issues (resolved text widget conflict from v0.3.1)
+
+### Technical
+- Custom button widget with `draw()` method for color preview rendering
+- Luminance-based contrast calculation for text color (0.299*R + 0.587*G + 0.114*B formula)
+- Direct button callback (no double-click detection needed)
+- Hidden color input element for native picker integration
 
 ## [0.3.1] - 2025-11-01
 
