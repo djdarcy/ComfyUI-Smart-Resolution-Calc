@@ -2613,18 +2613,18 @@ app.registerExtension({
                 // Hide image output parameters until "image" output (position 5) is connected
 
                 // Store references to image output widgets
+                // NOTE: fill_color is NOT tracked here - it stays visible (but rendered as size 0)
+                // to act as a value storage and stable anchor for the color picker button
                 this.imageOutputWidgets = {
                     output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
-                    fill_type: this.widgets.find(w => w.name === "fill_type"),
-                    fill_color: this.widgets.find(w => w.name === "fill_color")
+                    fill_type: this.widgets.find(w => w.name === "fill_type")
                 };
 
                 // Store original widget types, indices, and default values for restore
                 this.imageOutputWidgetIndices = {};
                 this.imageOutputWidgetValues = {
                     output_image_mode: "auto",
-                    fill_type: "black",
-                    fill_color: "#808080"
+                    fill_type: "black"
                 };
                 Object.keys(this.imageOutputWidgets).forEach(key => {
                     const widget = this.imageOutputWidgets[key];
@@ -2644,8 +2644,19 @@ app.registerExtension({
 
                 // ===== Color picker button widget =====
                 // Create a dedicated button widget for color picking, separate from text widget
-                const fillColorWidget = this.imageOutputWidgets.fill_color;
+                // Find fill_color widget (not tracked in imageOutputWidgets, stays visible as anchor)
+                const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
                 if (fillColorWidget) {
+                    // Hide the fill_color text widget since button shows the color
+                    // Keep widget for value storage but don't render it (acts as stable anchor)
+                    fillColorWidget.computeSize = function() { return [0, 0]; };
+                    fillColorWidget.draw = function() { /* Hidden */ };
+
+                    // Initialize value if needed
+                    if (!fillColorWidget.value || fillColorWidget.value === undefined) {
+                        fillColorWidget.value = "#808080";
+                    }
+
                     // Helper function to calculate contrasting text color
                     const getContrastColor = (hexColor) => {
                         // Remove # if present
@@ -2661,20 +2672,45 @@ app.registerExtension({
                     };
 
                     // Create button widget for color picker
-                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, function() {
+                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, () => {
+                        visibilityLogger.debug('[ColorPicker] Button clicked!');
+                        visibilityLogger.debug('[ColorPicker] fillColorWidget:', fillColorWidget);
+                        visibilityLogger.debug('[ColorPicker] fillColorWidget defined?', typeof fillColorWidget !== 'undefined');
+
                         const currentColor = fillColorWidget.value || "#808080";
                         const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
 
                         visibilityLogger.debug('Color picker button clicked, opening picker');
 
-                        // Calculate button position on screen for better color picker placement
-                        const nodePos = this.pos;
-                        const buttonIndex = this.widgets.indexOf(colorPickerButton);
+                        // Convert canvas coordinates to screen coordinates
+                        const canvas = this.graph?.list_of_graphcanvas?.[0];
+                        visibilityLogger.debug('[ColorPicker] graph:', this.graph);
+                        visibilityLogger.debug('[ColorPicker] list_of_graphcanvas:', this.graph?.list_of_graphcanvas);
+                        visibilityLogger.debug('[ColorPicker] canvas:', canvas);
+                        visibilityLogger.debug('[ColorPicker] canvas.ds:', canvas?.ds);
 
-                        // Estimate button Y position (approximate)
-                        let buttonY = nodePos[1] + 80; // Node header height
-                        for (let i = 0; i < buttonIndex; i++) {
-                            buttonY += 30; // Approximate widget height
+                        let screenX = 200; // Default fallback position
+                        let screenY = 200;
+
+                        if (canvas && canvas.ds) {
+                            // canvas.ds contains the transform: scale and offset
+                            const nodePos = this.pos;
+                            const buttonIndex = this.widgets.indexOf(colorPickerButton);
+
+                            // Estimate button Y position in canvas space
+                            let buttonCanvasY = nodePos[1] + 80; // Node header height
+                            for (let i = 0; i < buttonIndex; i++) {
+                                buttonCanvasY += 30; // Approximate widget height
+                            }
+
+                            // Convert canvas coordinates to screen coordinates
+                            // screenCoord = (canvasCoord * scale) + offset
+                            screenX = (nodePos[0] * canvas.ds.scale) + canvas.ds.offset[0] + 50;
+                            screenY = (buttonCanvasY * canvas.ds.scale) + canvas.ds.offset[1];
+
+                            visibilityLogger.debug(`Positioning picker at screen (${screenX}, ${screenY}) from canvas (${nodePos[0]}, ${buttonCanvasY})`);
+                        } else {
+                            visibilityLogger.debug('Canvas transform not available, using default position');
                         }
 
                         // Create color input positioned near the button
@@ -2682,8 +2718,8 @@ app.registerExtension({
                         colorInput.type = "color";
                         colorInput.value = normalizedColor;
                         colorInput.style.position = "fixed"; // Use fixed positioning
-                        colorInput.style.left = (nodePos[0] + 50) + "px"; // Position near node
-                        colorInput.style.top = buttonY + "px";
+                        colorInput.style.left = screenX + "px";
+                        colorInput.style.top = screenY + "px";
                         colorInput.style.width = "50px";
                         colorInput.style.height = "50px";
                         colorInput.style.border = "none";
@@ -2750,53 +2786,95 @@ app.registerExtension({
 
                 // Function to update widget visibility based on image output connection
                 this.updateImageOutputVisibility = function() {
+                    visibilityLogger.debug('=== updateImageOutputVisibility called ===');
+
                     // Ensure outputs array exists and has enough elements
                     if (!this.outputs || this.outputs.length < 6) {
+                        visibilityLogger.debug('Outputs not ready yet', this.outputs?.length);
                         return; // Outputs not ready yet
                     }
 
                     // Check if image output (position 5) has connections
                     const imageOutput = this.outputs[5]; // Position 5 = "image" output
+                    visibilityLogger.debug('Image output:', imageOutput);
+                    visibilityLogger.debug('Image output links:', imageOutput?.links);
 
                     // Filter out null/undefined links - array might contain nulls after disconnect
                     const hasConnection = imageOutput && imageOutput.links &&
                                         imageOutput.links.filter(link => link != null).length > 0;
 
                     visibilityLogger.debug(`Image output connected: ${hasConnection}`);
+                    visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
 
                     // Show/hide widgets based on connection status
-                    Object.keys(this.imageOutputWidgets).forEach(key => {
-                        const widget = this.imageOutputWidgets[key];
-                        if (widget) {
-                            const currentIndex = this.widgets.indexOf(widget);
-                            const isCurrentlyVisible = currentIndex !== -1;
+                    if (hasConnection) {
+                        // When showing, restore widgets relative to fill_color (which never moves)
+                        const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
+                        const fillColorIndex = fillColorWidget ? this.widgets.indexOf(fillColorWidget) : -1;
 
-                            if (hasConnection && !isCurrentlyVisible) {
-                                // Show widget - add back to widgets array at original position
-                                const targetIndex = this.imageOutputWidgetIndices[key];
-                                // Restore value before adding (but only if it's a primitive, not object)
-                                const savedValue = this.imageOutputWidgetValues[key];
-                                if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                    widget.value = savedValue;
-                                }
-                                this.widgets.splice(targetIndex, 0, widget);
-                                widget.type = widget.origType || "combo";
-                                visibilityLogger.debug(`Widget ${key} shown, value: ${widget.value}`);
-                            } else if (!hasConnection && isCurrentlyVisible) {
-                                // Hide widget - save current value (but only if it's a primitive, not object)
-                                if (typeof widget.value !== 'object') {
-                                    this.imageOutputWidgetValues[key] = widget.value;
-                                    visibilityLogger.debug(`Widget ${key} hidden, saved value: ${widget.value}`);
-                                } else {
-                                    visibilityLogger.warn(`Widget ${key} value is object, using default: ${this.imageOutputWidgetValues[key]}`);
-                                }
-                                this.widgets.splice(currentIndex, 1);
-                            }
+                        if (fillColorIndex === -1) {
+                            visibilityLogger.error("Cannot find fill_color widget for relative positioning");
+                            return;
                         }
-                    });
+
+                        // Define relative positions (offset from fill_color)
+                        const relativePositions = {
+                            'output_image_mode': -2,  // Two positions before fill_color
+                            'fill_type': -1,          // One position before fill_color
+                            'color_picker_button': 1  // One position after fill_color
+                        };
+
+                        // Show widgets in order (most negative offset first)
+                        const widgetsToShow = Object.keys(this.imageOutputWidgets)
+                            .filter(key => this.imageOutputWidgets[key] && this.widgets.indexOf(this.imageOutputWidgets[key]) === -1)
+                            .sort((a, b) => relativePositions[a] - relativePositions[b]);
+
+                        widgetsToShow.forEach(key => {
+                            const widget = this.imageOutputWidgets[key];
+                            const currentFillColorIndex = this.widgets.indexOf(fillColorWidget);
+                            const targetIndex = currentFillColorIndex + relativePositions[key];
+
+                            // Restore value before adding (but only if it's a primitive, not object)
+                            const savedValue = this.imageOutputWidgetValues[key];
+                            if (savedValue !== undefined && typeof savedValue !== 'object') {
+                                widget.value = savedValue;
+                            }
+
+                            this.widgets.splice(targetIndex, 0, widget);
+                            widget.type = widget.origType || "combo";
+                            visibilityLogger.debug(`Widget ${key} shown at index ${targetIndex} (fill_color at ${currentFillColorIndex}), value: ${widget.value}`);
+                        });
+                    } else {
+                        // When hiding, remove in reverse order to avoid index shifts
+                        visibilityLogger.debug('HIDING WIDGETS - hasConnection is false');
+                        const widgetsToHide = Object.keys(this.imageOutputWidgets)
+                            .map(key => ({
+                                key,
+                                widget: this.imageOutputWidgets[key],
+                                currentIndex: this.widgets.indexOf(this.imageOutputWidgets[key])
+                            }))
+                            .filter(item => item.widget && item.currentIndex !== -1)
+                            .sort((a, b) => b.currentIndex - a.currentIndex); // Reverse order
+
+                        visibilityLogger.debug('Widgets to hide:', widgetsToHide.map(w => `${w.key} at index ${w.currentIndex}`));
+
+                        widgetsToHide.forEach(item => {
+                            // Hide widget - save current value (but only if it's a primitive, not object)
+                            if (typeof item.widget.value !== 'object') {
+                                this.imageOutputWidgetValues[item.key] = item.widget.value;
+                                visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${item.widget.value}`);
+                            } else {
+                                visibilityLogger.debug(`Widget ${item.key} value is object, using default: ${this.imageOutputWidgetValues[item.key]}`);
+                            }
+                            this.widgets.splice(item.currentIndex, 1);
+                        });
+                    }
 
                     // Resize node to accommodate shown/hidden widgets
-                    this.setSize(this.computeSize());
+                    // Preserve width, only change height
+                    const currentSize = this.size || this.computeSize();
+                    const newSize = this.computeSize();
+                    this.setSize([currentSize[0], newSize[1]]);
                 };
 
                 // Initially hide widgets - delay until outputs are ready
