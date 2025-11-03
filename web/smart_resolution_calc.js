@@ -1,12 +1,37 @@
-import { app } from "../../scripts/app.js";
-import { TOOLTIP_CONTENT } from "./tooltip_content.js";
-
 /**
  * Smart Resolution Calculator - Compact Custom Widgets
  *
  * rgthree-style compact widgets with toggle on LEFT, value on RIGHT
  * Reduced spacing and height for professional, space-efficient layout
+ *
+ * COMPATIBILITY NOTE:
+ * Uses dynamic imports with auto-depth detection to work in both:
+ * - Standalone mode: /extensions/smart-resolution-calc/
+ * - DazzleNodes mode: /extensions/DazzleNodes/smart-resolution-calc/
  */
+
+// Dynamic import helper for standalone vs DazzleNodes compatibility (Option A: Inline)
+async function importComfyCore() {
+    const currentPath = import.meta.url;
+    const urlParts = new URL(currentPath).pathname.split('/').filter(p => p);
+    const depth = urlParts.length; // Each part requires one ../ to traverse up
+    const prefix = '../'.repeat(depth);
+
+    const [appModule, tooltipModule] = await Promise.all([
+        import(`${prefix}scripts/app.js`),
+        import('./tooltip_content.js')
+    ]);
+
+    return {
+        app: appModule.app,
+        TOOLTIP_CONTENT: tooltipModule.TOOLTIP_CONTENT
+    };
+}
+
+// Initialize extension with dynamic imports
+(async () => {
+    // Import ComfyUI app and local tooltip content
+    const { app, TOOLTIP_CONTENT } = await importComfyCore();
 
 /**
  * Debug Logger - Multi-level logging
@@ -72,6 +97,11 @@ class DebugLogger {
 }
 
 const logger = new DebugLogger('SmartResCalc');
+const visibilityLogger = new DebugLogger('SmartResCalc:Visibility');
+
+// Expose loggers globally for debugging
+window.smartResCalcLogger = logger;
+window.smartResCalcVisibilityLogger = visibilityLogger;
 
 /**
  * Toggle Behavior Modes
@@ -2579,6 +2609,247 @@ app.registerExtension({
                     ctx.restore();
                 };
 
+                // ===== NEW: Conditional visibility for image output parameters =====
+                // Hide image output parameters until "image" output (position 5) is connected
+
+                // Store references to image output widgets
+                this.imageOutputWidgets = {
+                    output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
+                    fill_type: this.widgets.find(w => w.name === "fill_type"),
+                    fill_color: this.widgets.find(w => w.name === "fill_color")
+                };
+
+                // Store original widget types, indices, and default values for restore
+                this.imageOutputWidgetIndices = {};
+                this.imageOutputWidgetValues = {
+                    output_image_mode: "auto",
+                    fill_type: "black",
+                    fill_color: "#808080"
+                };
+                Object.keys(this.imageOutputWidgets).forEach(key => {
+                    const widget = this.imageOutputWidgets[key];
+                    if (widget) {
+                        widget.origType = widget.type;
+                        // Store original index in widgets array
+                        this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
+                        // Initialize widget value if not already set
+                        if (widget.value === undefined || typeof widget.value === 'object') {
+                            widget.value = this.imageOutputWidgetValues[key];
+                        } else {
+                            // Use actual widget value if already initialized
+                            this.imageOutputWidgetValues[key] = widget.value;
+                        }
+                    }
+                });
+
+                // ===== Color picker button widget =====
+                // Create a dedicated button widget for color picking, separate from text widget
+                const fillColorWidget = this.imageOutputWidgets.fill_color;
+                if (fillColorWidget) {
+                    // Helper function to calculate contrasting text color
+                    const getContrastColor = (hexColor) => {
+                        // Remove # if present
+                        const hex = hexColor.replace('#', '');
+                        // Convert to RGB
+                        const r = parseInt(hex.substr(0, 2), 16);
+                        const g = parseInt(hex.substr(2, 2), 16);
+                        const b = parseInt(hex.substr(4, 2), 16);
+                        // Calculate luminance
+                        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                        // Return black for light colors, white for dark colors
+                        return luminance > 0.5 ? '#000000' : '#FFFFFF';
+                    };
+
+                    // Create button widget for color picker
+                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, function() {
+                        const currentColor = fillColorWidget.value || "#808080";
+                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+
+                        visibilityLogger.debug('Color picker button clicked, opening picker');
+
+                        // Calculate button position on screen for better color picker placement
+                        const nodePos = this.pos;
+                        const buttonIndex = this.widgets.indexOf(colorPickerButton);
+
+                        // Estimate button Y position (approximate)
+                        let buttonY = nodePos[1] + 80; // Node header height
+                        for (let i = 0; i < buttonIndex; i++) {
+                            buttonY += 30; // Approximate widget height
+                        }
+
+                        // Create color input positioned near the button
+                        const colorInput = document.createElement("input");
+                        colorInput.type = "color";
+                        colorInput.value = normalizedColor;
+                        colorInput.style.position = "fixed"; // Use fixed positioning
+                        colorInput.style.left = (nodePos[0] + 50) + "px"; // Position near node
+                        colorInput.style.top = buttonY + "px";
+                        colorInput.style.width = "50px";
+                        colorInput.style.height = "50px";
+                        colorInput.style.border = "none";
+                        colorInput.style.opacity = "0"; // Still invisible, but positioned
+                        colorInput.style.pointerEvents = "auto"; // Allow interaction
+                        document.body.appendChild(colorInput);
+
+                        // Handle color selection
+                        colorInput.addEventListener("change", (e) => {
+                            fillColorWidget.value = e.target.value;
+                            this.setDirtyCanvas(true, true);
+                            visibilityLogger.debug(`Color selected: ${e.target.value}`);
+                            document.body.removeChild(colorInput);
+                        });
+
+                        // Handle cancellation
+                        colorInput.addEventListener("blur", () => {
+                            setTimeout(() => {
+                                if (colorInput.parentNode) {
+                                    document.body.removeChild(colorInput);
+                                    visibilityLogger.debug('Color picker cancelled');
+                                }
+                            }, 100);
+                        });
+
+                        // Open color picker
+                        colorInput.click();
+                        colorInput.focus();
+                    });
+
+                    // Custom draw to show current color
+                    colorPickerButton.draw = function(ctx, node, width, y, height) {
+                        const currentColor = fillColorWidget.value || "#808080";
+                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+                        const contrastColor = getContrastColor(normalizedColor);
+
+                        // Draw color preview background
+                        ctx.fillStyle = normalizedColor;
+                        ctx.fillRect(0, y, width, height);
+
+                        // Draw border
+                        ctx.strokeStyle = "#666";
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(0, y, width, height);
+
+                        // Draw text: emoji + hex value
+                        ctx.fillStyle = contrastColor;
+                        ctx.font = "12px monospace";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, width / 2, y + height / 2);
+                    };
+
+                    // Insert button right after fill_color widget (not at end)
+                    const fillColorIndex = this.widgets.indexOf(fillColorWidget);
+                    this.widgets.splice(fillColorIndex + 1, 0, colorPickerButton);
+
+                    // Add button to image output widgets list
+                    this.imageOutputWidgets.color_picker_button = colorPickerButton;
+
+                    // Store original widget index for button
+                    this.imageOutputWidgetIndices.color_picker_button = fillColorIndex + 1;
+                }
+
+                // Function to update widget visibility based on image output connection
+                this.updateImageOutputVisibility = function() {
+                    // Ensure outputs array exists and has enough elements
+                    if (!this.outputs || this.outputs.length < 6) {
+                        return; // Outputs not ready yet
+                    }
+
+                    // Check if image output (position 5) has connections
+                    const imageOutput = this.outputs[5]; // Position 5 = "image" output
+
+                    // Filter out null/undefined links - array might contain nulls after disconnect
+                    const hasConnection = imageOutput && imageOutput.links &&
+                                        imageOutput.links.filter(link => link != null).length > 0;
+
+                    visibilityLogger.debug(`Image output connected: ${hasConnection}`);
+
+                    // Show/hide widgets based on connection status
+                    Object.keys(this.imageOutputWidgets).forEach(key => {
+                        const widget = this.imageOutputWidgets[key];
+                        if (widget) {
+                            const currentIndex = this.widgets.indexOf(widget);
+                            const isCurrentlyVisible = currentIndex !== -1;
+
+                            if (hasConnection && !isCurrentlyVisible) {
+                                // Show widget - add back to widgets array at original position
+                                const targetIndex = this.imageOutputWidgetIndices[key];
+                                // Restore value before adding (but only if it's a primitive, not object)
+                                const savedValue = this.imageOutputWidgetValues[key];
+                                if (savedValue !== undefined && typeof savedValue !== 'object') {
+                                    widget.value = savedValue;
+                                }
+                                this.widgets.splice(targetIndex, 0, widget);
+                                widget.type = widget.origType || "combo";
+                                visibilityLogger.debug(`Widget ${key} shown, value: ${widget.value}`);
+                            } else if (!hasConnection && isCurrentlyVisible) {
+                                // Hide widget - save current value (but only if it's a primitive, not object)
+                                if (typeof widget.value !== 'object') {
+                                    this.imageOutputWidgetValues[key] = widget.value;
+                                    visibilityLogger.debug(`Widget ${key} hidden, saved value: ${widget.value}`);
+                                } else {
+                                    visibilityLogger.warn(`Widget ${key} value is object, using default: ${this.imageOutputWidgetValues[key]}`);
+                                }
+                                this.widgets.splice(currentIndex, 1);
+                            }
+                        }
+                    });
+
+                    // Resize node to accommodate shown/hidden widgets
+                    this.setSize(this.computeSize());
+                };
+
+                // Initially hide widgets - delay until outputs are ready
+                setTimeout(() => {
+                    this.updateImageOutputVisibility();
+                }, 100);
+
+                // Monitor connection changes - store bound function on instance
+                const originalOnConnectionsChange = this.onConnectionsChange;
+                this.onConnectionsChange = function(type, index, connected, link_info) {
+                    // Call original handler
+                    if (originalOnConnectionsChange) {
+                        originalOnConnectionsChange.apply(this, arguments);
+                    }
+
+                    // If image output (position 5) connection changed, update visibility
+                    if (type === LiteGraph.OUTPUT && index === 5) {
+                        this.updateImageOutputVisibility();
+                    }
+                };
+
+                // Also monitor onConnectionsRemove for disconnect events (fallback)
+                const originalOnConnectionsRemove = this.onConnectionsRemove;
+                this.onConnectionsRemove = function(type, index, link_info) {
+                    // Call original handler
+                    if (originalOnConnectionsRemove) {
+                        originalOnConnectionsRemove.apply(this, arguments);
+                    }
+
+                    // If image output (position 5) was disconnected, update visibility
+                    if (type === LiteGraph.OUTPUT && index === 5) {
+                        this.updateImageOutputVisibility();
+                    }
+                };
+
+                // Periodic check for connection status changes (fallback for when events don't fire)
+                // NOTE: This is necessary because LiteGraph disconnect events don't fire reliably
+                // The 500ms polling is acceptable UX-wise and handles the edge case
+                this._lastImageConnectionState = false;
+                this._connectionCheckInterval = setInterval(() => {
+                    if (!this.outputs || this.outputs.length < 6) return;
+
+                    const imageOutput = this.outputs[5];
+                    const currentState = imageOutput && imageOutput.links &&
+                                       imageOutput.links.filter(link => link != null).length > 0;
+
+                    if (currentState !== this._lastImageConnectionState) {
+                        visibilityLogger.debug(`Image connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
+                        this._lastImageConnectionState = currentState;
+                        this.updateImageOutputVisibility();
+                    }
+                }, 500); // Check every 500ms
+
                 return r;
             };
 
@@ -2891,3 +3162,8 @@ app.registerExtension({
 });
 
 console.log("[SmartResCalc] Compact widgets loaded (rgthree-style) - Debug:", logger.enabled);
+
+})().catch(error => {
+    console.error("[SmartResCalc] Failed to load extension:", error);
+    console.error("[SmartResCalc] This may be due to incorrect import paths. Check browser console for details.");
+});

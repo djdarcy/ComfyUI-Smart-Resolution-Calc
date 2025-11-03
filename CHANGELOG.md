@@ -5,7 +5,127 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased - 0.2.0-beta]
+## [0.3.3] - 2025-11-02 (Work in Progress - Known Bugs)
+
+### Added
+- **DazzleNodes Compatibility**: Dynamic import support for multi-package loading
+  - Auto-detects import path depth using import.meta.url
+  - Works in standalone mode: `/extensions/smart-resolution-calc/`
+  - Works in DazzleNodes mode: `/extensions/DazzleNodes/smart-resolution-calc/`
+  - Wrapped extension in async IIFE with Promise-based imports
+
+- **Color Picker Button Widget**: Dedicated button for visual color selection
+  - Separate "🎨 Pick Color" button widget (not hybrid text widget)
+  - Custom draw shows color preview with contrasting text
+  - Updates fill_color text widget when color selected
+  - Inserted directly after fill_color widget for logical grouping
+
+### Changed
+- **Category**: Changed from "Smart Resolution" to "DazzleNodes" for package grouping
+
+### Known Issues (DO NOT RELEASE)
+- ⚠️ Color picker positioning BROKEN - appears in wrong location
+- ⚠️ Picker may not appear consistently
+- ⚠️ Position calculation based on estimates (80px header + 30px/widget)
+- ⚠️ Does not account for actual widget heights or node transformations
+- **Next**: Fix positioning algorithm or implement alternative approach
+
+### Technical
+- Dynamic import helper: importComfyCore() with path depth calculation
+- Color picker button uses fixed positioning with calculated coordinates
+- Debug logging via visibilityLogger for click events
+- Widget splice insertion maintains logical order
+
+## [0.3.2] - 2025-11-01 (Non-functional release)
+
+### Changed
+- **Color Button Widget**: Replaced fill_color text input with button showing color preview
+  - Visual color preview as button background
+  - Automatic text color inversion for legibility (black text on light colors, white on dark)
+  - Single-click to open native browser color picker
+  - No focus-fighting issues (resolved text widget conflict from v0.3.1)
+
+### Technical
+- Custom button widget with `draw()` method for color preview rendering
+- Luminance-based contrast calculation for text color (0.299*R + 0.587*G + 0.114*B formula)
+- Direct button callback (no double-click detection needed)
+- Hidden color input element for native picker integration
+
+## [0.3.1] - 2025-11-01
+
+### Added
+- **Debug Infrastructure**: Separate visibility logger for conditional widget features
+  - New debug channel: `SmartResCalc:Visibility`
+  - Globally accessible via `window.smartResCalcVisibilityLogger`
+  - Cleaned up verbose console.log statements
+
+### Experimental
+- **Double-Click Color Picker** (partially working)
+  - Detects double-click on fill_color text field
+  - Opens native browser color picker
+  - Known issue: Immediately dismissed due to text widget focus stealing
+  - Will be replaced with button widget in v0.3.2
+
+## [0.3.0] - 2025-11-01
+
+### Added
+- **IMAGE Output**: New dedicated IMAGE output for generated/transformed images (separate from preview)
+  - Three output modes: auto (smart default), empty (generated image), transformed (resized input)
+  - Five fill patterns: black, white, custom_color, noise (Gaussian), random (uniform)
+  - Smart defaults: "auto" mode selects transformed (with image input) or empty (without image input)
+  - Conditional visibility: output parameters hidden when IMAGE output not connected
+  - Breaking change: LATENT output moved from position 5 to 6 (IMAGE now at position 5)
+
+### Technical (Backend)
+- **New Parameters** (`py/smart_resolution_calc.py`):
+  - `output_image_mode`: ["auto", "empty", "transformed"] with smart defaults
+  - `fill_type`: Five pattern options with detailed tooltips
+  - `fill_color`: Hex color code support (#RRGGBB format)
+- **New Methods**:
+  - `create_empty_image()`: Generates images with configurable fill patterns
+  - `transform_image()`: Resizes input images using `comfy.utils.common_upscale`
+- **Fill Pattern Implementations**:
+  - Black: `torch.zeros()` (solid #000000)
+  - White: `torch.ones()` (solid #FFFFFF)
+  - Custom Color: Hex RGB parsing with validation
+  - Noise: Gaussian distribution (`randn() * 0.1 + 0.5`, camera-like)
+  - Random: Uniform distribution (`rand()`, TV static-like)
+- **Smart Defaults Logic**: "auto" mode selects based on input image presence
+  - Input image connected → "transformed" (resize input to calculated dimensions)
+  - No input image → "empty" (generate image with fill pattern)
+  - User can override by selecting "empty" or "transformed" explicitly
+
+### Technical (Frontend)
+- **Conditional Widget Visibility** (`web/smart_resolution_calc.js`):
+  - Monitors IMAGE output (position 5) connection state
+  - Hides `output_image_mode`, `fill_type`, `fill_color` when output not connected
+  - Uses `widget.type = "converted-widget"` pattern for hiding
+  - Automatic node resize when widgets shown/hidden
+- **Double-Click Color Picker**:
+  - Native browser color picker via hidden input element
+  - Opens on double-click of fill_color widget
+  - Updates widget value on color selection
+  - Graceful cancellation handling
+- **Enhanced Tooltips**: Multi-line tooltips explaining all parameters and fill pattern differences
+
+### Benefits
+- ✅ **Dual Output System**: Preview (unchanged) + dedicated IMAGE output
+- ✅ **Flexible Fill Patterns**: Multiple options for generated images
+- ✅ **User-Friendly**: Visual color picker, smart defaults, conditional visibility
+- ✅ **Backward Compatible**: Preview output unchanged, existing workflows unaffected (except LATENT position)
+- ✅ **Performance**: Uses ComfyUI standard upscale function for transforms
+
+### Breaking Changes
+- **LATENT Output Position**: Moved from position 5 to 6 (IMAGE now at position 5)
+  - Workflows using LATENT output will need reconnection
+  - All other outputs remain in same positions
+
+### Known Limitations
+- Color picker requires double-click (single click edits text value)
+- Transform mode only supports bilinear interpolation currently
+- IMAGE output nub is always visible (cannot be hidden, even when not connected)
+
+## [0.2.0-beta]
 
 ### Fixed
 - **Custom Aspect Ratio Float Parsing**: Fixed bug where custom aspect ratios with decimal values (e.g., "1.85:1", "2.39:1") threw `invalid literal for int()` error
@@ -14,10 +134,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Graceful fallback to 16:9 with error logging for invalid input
   - Maintains backward compatibility with integer ratios ("16:9" still works)
   - Fulfills tooltip promise: "fractional OK: '1:2.5', '16:9', '1.85:1'"
-
-### Planned
-- Additional testing and polish
-- Shift+Click documentation for native widgets
 
 ## [0.2.0-alpha8] - 2025-10-26
 
