@@ -5,7 +5,51 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-11-04
+
+### Added
+- **DimensionSourceManager Class** (Issue #16): Core architecture for dimension source priority system
+  - Implements complete 6-level state machine to resolve dimension/aspect ratio conflicts
+  - Centralized dimension calculation with explicit priority hierarchy
+  - Memoization cache (100ms TTL) for performance optimization
+  - Conflict detection system (7 conflict types with severity levels)
+  - **Priority Hierarchy**:
+    1. USE IMAGE DIMS = Exact Dims (absolute override)
+    2. MP + WIDTH + HEIGHT (scalar with AR from W:H)
+    3. Explicit Dimensions (WIDTH+HEIGHT, MP+WIDTH, MP+HEIGHT)
+    4. USE IMAGE DIMS = AR Only (image AR + dimension widgets)
+    5. Single dimension with AR (WIDTH/HEIGHT/MP + AR source)
+    6. Defaults with AR (fallback)
+  - **API**: `getActiveDimensionSource()` returns `{mode, priority, baseW, baseH, source, ar, conflicts, description}`
+  - Foundation for Issues #17-#24 (widget integration, Python parity, testing)
+  - Related: Issue #15 (umbrella), State Machine documentation in `private/claude/`
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Added `DimensionSourceManager` class (~513 lines) between TooltipManager and InfoIcon classes
+  - Implements all 6 priority level calculation methods
+  - Helper methods: `_getWidgets()`, `_computeARFromDimensions()`, `_parseCustomAspectRatio()`, `_parseDropdownAspectRatio()`
+  - Conflict detection: `_detectConflicts()` returns structured conflict objects
+  - Cache management: `invalidateCache()` for widget change invalidation
+  - GCD algorithm for aspect ratio reduction (1024:1024 → 1:1)
+  - Supports all AR sources: custom_ratio, image AR, WIDTH+HEIGHT implicit, dropdown
+
+### Notes
+- **Not yet integrated**: Manager class exists but not hooked up to node/widgets (Issue #22)
+- **Python parity pending**: Backend implementation in Issue #19 (v0.4.3)
+- **Testing pending**: Issue #24 (v0.5.2) will validate all modes
+- **Future work**: Widget integration (v0.4.4), SCALE tooltip refactor (v0.4.5), conflict warnings (v0.4.6)
+
 ## [0.3.7] - 2025-11-04
+
+### Added
+- **SCALE Widget: Double-Click Reset** (Issue #13): Double-click anywhere on SCALE slider to instantly reset to 1.0x
+  - Works on both slider track and handle
+  - 300ms double-click detection threshold
+  - Quality of life improvement for quick reset without precise dragging
+  - Logs reset action for debugging
+
+## [0.3.6] - 2025-11-04
 
 ### Changed
 - **Widget Rename**: "USE IMAGE?" renamed to "USE IMAGE DIMS?" for clarity
@@ -16,13 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Examples: "9:16 (Slim Vertical)" → "9:16 (Vert Vids: YT Shorts/TikTok/Reels)", "16:9 (Panorama)" → "16:9 (HD Video/YouTube/TV)", "3:4 (Golden Ratio)" → "3:4 (SD Video Portrait)"
   - Added platform/format context: Instagram, photo print sizes, monitor standards, video platforms
   - Makes aspect ratio selection more intuitive for real-world use cases
-
-### Added
-- **SCALE Widget: Double-Click Reset** (Issue #13): Double-click anywhere on SCALE slider to instantly reset to 1.0x
-  - Works on both slider track and handle
-  - 300ms double-click detection threshold
-  - Quality of life improvement for quick reset without precise dragging
-  - Logs reset action for debugging
 
 ### Fixed
 - **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions and aspect ratio
