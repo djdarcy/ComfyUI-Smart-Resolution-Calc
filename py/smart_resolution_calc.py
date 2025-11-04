@@ -85,9 +85,9 @@ class SmartResolutionCalc:
                 }),
                 "image": ("IMAGE",),
                 # NEW: Image output parameters (hidden by JavaScript until output connected)
-                "output_image_mode": (["auto", "empty", "transformed"], {
+                "output_image_mode": (["auto", "empty", "transform (distort)", "transform (crop/pad)", "transform (scale/crop)", "transform (scale/pad)"], {
                     "default": "auto",
-                    "tooltip": "Image output mode:\n• auto: Smart default (transformed if image input, empty otherwise)\n• empty: Generate new image with fill pattern\n• transformed: Resize input image to calculated dimensions"
+                    "tooltip": "Image output mode:\n• auto: Smart default (transform (distort) if image input, empty otherwise)\n• empty: Generate new image with fill pattern\n• transform (distort): Scale to exact dimensions (ignores aspect ratio)\n• transform (crop/pad): No scaling, crop if larger or pad if smaller\n• transform (scale/crop): Scale to cover target (maintains AR), crop excess\n• transform (scale/pad): Scale to fit inside target (maintains AR), pad remainder"
                 }),
                 "fill_type": (["black", "white", "custom_color", "noise", "random"], {
                     "default": "black",
@@ -426,8 +426,8 @@ class SmartResolutionCalc:
         if output_image_mode == "auto":
             # Apply smart defaults based on input image presence
             if image is not None:
-                actual_mode = "transformed"
-                logger.debug("Smart default: 'auto' → 'transformed' (input image detected)")
+                actual_mode = "transform (distort)"
+                logger.debug("Smart default: 'auto' → 'transform (distort)' (input image detected)")
             else:
                 actual_mode = "empty"
                 logger.debug("Smart default: 'auto' → 'empty' (no input image)")
@@ -438,15 +438,45 @@ class SmartResolutionCalc:
             output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
             logger.debug(f"Generated empty image: {w}×{h}, fill={fill_type}")
 
-        elif actual_mode == "transformed":
+        elif actual_mode == "transform (distort)":
             if image is not None:
-                # Transform input image to calculated dimensions
+                # Transform input image to calculated dimensions (may distort aspect ratio)
                 # Note: Use input image's batch size, not batch_size parameter
                 output_image = self.transform_image(image, w, h)
-                logger.debug(f"Transformed input image to {w}×{h}")
+                logger.debug(f"Transformed (distort) input image to {w}×{h}")
             else:
                 # No image connected - fallback to empty image with current fill settings
-                logger.warning("Transform mode selected but no image connected, generating empty image")
+                logger.warning("Transform (distort) mode selected but no image connected, generating empty image")
+                output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
+
+        elif actual_mode == "transform (crop/pad)":
+            if image is not None:
+                # No scaling - crop if larger, pad if smaller
+                output_image = self.transform_image_crop_pad(image, w, h, fill_type, fill_color)
+                logger.debug(f"Transformed (crop/pad) input image to {w}×{h}")
+            else:
+                # No image connected - fallback to empty image with current fill settings
+                logger.warning("Transform (crop/pad) mode selected but no image connected, generating empty image")
+                output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
+
+        elif actual_mode == "transform (scale/crop)":
+            if image is not None:
+                # Scale to cover target (maintaining AR), crop excess
+                output_image = self.transform_image_scale_crop(image, w, h)
+                logger.debug(f"Transformed (scale/crop) input image to {w}×{h}")
+            else:
+                # No image connected - fallback to empty image with current fill settings
+                logger.warning("Transform (scale/crop) mode selected but no image connected, generating empty image")
+                output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
+
+        elif actual_mode == "transform (scale/pad)":
+            if image is not None:
+                # Scale to fit inside target (maintaining AR), pad remainder
+                output_image = self.transform_image_scale_pad(image, w, h, fill_type, fill_color)
+                logger.debug(f"Transformed (scale/pad) input image to {w}×{h}")
+            else:
+                # No image connected - fallback to empty image with current fill settings
+                logger.warning("Transform (scale/pad) mode selected but no image connected, generating empty image")
                 output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
 
         else:  # Safety fallback for invalid mode values
@@ -543,7 +573,8 @@ class SmartResolutionCalc:
 
     def transform_image(self, image: torch.Tensor, target_width: int, target_height: int) -> torch.Tensor:
         """
-        Transform input image to target dimensions using bilinear interpolation.
+        Transform input image to target dimensions using bilinear interpolation (distort mode).
+        Scales image to exactly fit target dimensions without preserving aspect ratio.
 
         Args:
             image: Input tensor [batch, height, width, channels]
@@ -569,6 +600,265 @@ class SmartResolutionCalc:
 
         # Convert back NCHW -> NHWC
         output = output.movedim(1, -1)
+
+        return output
+
+    def transform_image_scale_pad(
+        self,
+        image: torch.Tensor,
+        target_width: int,
+        target_height: int,
+        fill_type: str = "black",
+        fill_color: str = "#808080"
+    ) -> torch.Tensor:
+        """
+        Transform input image to target dimensions using scale/pad strategy.
+        Scales image to fit within target, then pads to reach exact dimensions.
+
+        Strategy:
+        - Scale image to fit INSIDE target dimensions (maintaining aspect ratio)
+        - Center the scaled image within target canvas
+        - Pad remaining space with specified fill pattern
+        - Result always matches target dimensions exactly
+
+        Args:
+            image: Input tensor [batch, height, width, channels]
+            target_width: Target width in pixels
+            target_height: Target height in pixels
+            fill_type: Fill pattern for padding areas
+            fill_color: Hex color for custom_color fill
+
+        Returns:
+            Transformed tensor [batch, target_height, target_width, channels]
+        """
+        batch_size, source_height, source_width, channels = image.shape
+
+        # Calculate aspect ratios
+        source_ar = source_width / source_height
+        target_ar = target_width / target_height
+
+        logger.debug(f"Crop/pad transform: source={source_width}×{source_height} (AR={source_ar:.3f}), "
+                    f"target={target_width}×{target_height} (AR={target_ar:.3f})")
+
+        # Determine if we need to crop or pad
+        if abs(source_ar - target_ar) < 0.001:
+            # Aspect ratios match - simple scale to fit
+            logger.debug("Aspect ratios match, scaling to fit")
+            return self.transform_image(image, target_width, target_height)
+
+        # Calculate scaled dimensions to fit inside target while maintaining AR
+        if source_ar > target_ar:
+            # Source is wider - fit to target width, height will be smaller
+            scale_width = target_width
+            scale_height = int(target_width / source_ar)
+        else:
+            # Source is taller - fit to target height, width will be smaller
+            scale_height = target_height
+            scale_width = int(target_height * source_ar)
+
+        logger.debug(f"Scaling to {scale_width}×{scale_height} (fits within {target_width}×{target_height})")
+
+        # Scale image to fit within target
+        scaled = self.transform_image(image, scale_width, scale_height)
+
+        # Create canvas with target dimensions filled with specified pattern
+        # Use batch size from input image, not the parameter
+        canvas = self.create_empty_image(target_width, target_height, fill_type, fill_color, batch_size)
+
+        # Calculate centering offsets
+        offset_x = (target_width - scale_width) // 2
+        offset_y = (target_height - scale_height) // 2
+
+        logger.debug(f"Centering scaled image at offset ({offset_x}, {offset_y})")
+
+        # Place scaled image in center of canvas
+        canvas[:, offset_y:offset_y+scale_height, offset_x:offset_x+scale_width, :] = scaled
+
+        # Verify output dimensions
+        assert canvas.shape[1] == target_height and canvas.shape[2] == target_width, \
+            f"Output dimensions mismatch: got {canvas.shape[2]}×{canvas.shape[1]}, expected {target_width}×{target_height}"
+
+        return canvas
+
+    def transform_image_crop_pad(
+        self,
+        image: torch.Tensor,
+        target_width: int,
+        target_height: int,
+        fill_type: str = "black",
+        fill_color: str = "#808080"
+    ) -> torch.Tensor:
+        """
+        Transform input image to target dimensions using pure crop/pad (NO scaling).
+        Crops dimensions larger than target, pads dimensions smaller than target.
+
+        Strategy:
+        - NO scaling applied - original image stays at 1:1 scale
+        - If dimension > target: Center crop to target size
+        - If dimension < target: Center and pad to target size
+        - Result always matches target dimensions exactly
+
+        Example: 1024×1024 → 1885×530
+        - Width: 1024 < 1885, pad 430.5px left + 430.5px right
+        - Height: 1024 > 530, crop 247px top + 247px bottom
+
+        Args:
+            image: Input tensor [batch, height, width, channels]
+            target_width: Target width in pixels
+            target_height: Target height in pixels
+            fill_type: Fill pattern for padding areas
+            fill_color: Hex color for custom_color fill
+
+        Returns:
+            Transformed tensor [batch, target_height, target_width, channels]
+        """
+        batch_size, source_height, source_width, channels = image.shape
+
+        logger.debug(f"Crop/pad transform (no scaling): source={source_width}×{source_height}, "
+                    f"target={target_width}×{target_height}")
+
+        # Determine crop/pad for width
+        if source_width == target_width:
+            # Width matches - use original
+            width_start = 0
+            width_end = source_width
+            pad_left = 0
+            pad_right = 0
+            logger.debug(f"Width matches target ({target_width})")
+        elif source_width > target_width:
+            # Width larger - center crop
+            width_start = (source_width - target_width) // 2
+            width_end = width_start + target_width
+            pad_left = 0
+            pad_right = 0
+            logger.debug(f"Cropping width: {source_width} → {target_width} (crop from {width_start})")
+        else:
+            # Width smaller - will need padding
+            width_start = 0
+            width_end = source_width
+            pad_left = (target_width - source_width) // 2
+            pad_right = target_width - source_width - pad_left
+            logger.debug(f"Padding width: {source_width} → {target_width} (pad left={pad_left}, right={pad_right})")
+
+        # Determine crop/pad for height
+        if source_height == target_height:
+            # Height matches - use original
+            height_start = 0
+            height_end = source_height
+            pad_top = 0
+            pad_bottom = 0
+            logger.debug(f"Height matches target ({target_height})")
+        elif source_height > target_height:
+            # Height larger - center crop
+            height_start = (source_height - target_height) // 2
+            height_end = height_start + target_height
+            pad_top = 0
+            pad_bottom = 0
+            logger.debug(f"Cropping height: {source_height} → {target_height} (crop from {height_start})")
+        else:
+            # Height smaller - will need padding
+            height_start = 0
+            height_end = source_height
+            pad_top = (target_height - source_height) // 2
+            pad_bottom = target_height - source_height - pad_top
+            logger.debug(f"Padding height: {source_height} → {target_height} (pad top={pad_top}, bottom={pad_bottom})")
+
+        # Crop the image (if needed)
+        cropped = image[:, height_start:height_end, width_start:width_end, :]
+
+        # If no padding needed, we're done
+        if pad_left == 0 and pad_right == 0 and pad_top == 0 and pad_bottom == 0:
+            logger.debug("No padding needed, returning cropped image")
+            return cropped
+
+        # Create canvas with target dimensions
+        canvas = self.create_empty_image(target_width, target_height, fill_type, fill_color, batch_size)
+
+        # Place cropped image in canvas at correct position
+        canvas[:, pad_top:pad_top+cropped.shape[1], pad_left:pad_left+cropped.shape[2], :] = cropped
+
+        # Verify output dimensions
+        assert canvas.shape[1] == target_height and canvas.shape[2] == target_width, \
+            f"Output dimensions mismatch: got {canvas.shape[2]}×{canvas.shape[1]}, expected {target_width}×{target_height}"
+
+        return canvas
+
+    def transform_image_scale_crop(
+        self,
+        image: torch.Tensor,
+        target_width: int,
+        target_height: int
+    ) -> torch.Tensor:
+        """
+        Transform input image to target dimensions using scale/crop strategy.
+        Scales image to cover target completely, then crops excess.
+
+        Strategy:
+        - Scale image to COVER target dimensions (maintaining aspect ratio)
+        - At least one dimension will match target exactly
+        - Other dimension will be >= target
+        - Center crop the excess
+        - Result always matches target dimensions exactly
+
+        Example: 1024×1024 → 1885×530
+        - Scale to 1885×1885 (covers target width, maintains square AR)
+        - Crop 677.5px from top + 677.5px from bottom
+
+        Args:
+            image: Input tensor [batch, height, width, channels]
+            target_width: Target width in pixels
+            target_height: Target height in pixels
+
+        Returns:
+            Transformed tensor [batch, target_height, target_width, channels]
+        """
+        batch_size, source_height, source_width, channels = image.shape
+
+        # Calculate aspect ratios
+        source_ar = source_width / source_height
+        target_ar = target_width / target_height
+
+        logger.debug(f"Scale/crop transform: source={source_width}×{source_height} (AR={source_ar:.3f}), "
+                    f"target={target_width}×{target_height} (AR={target_ar:.3f})")
+
+        # Check if aspect ratios match
+        if abs(source_ar - target_ar) < 0.001:
+            # Aspect ratios match - simple scale to fit
+            logger.debug("Aspect ratios match, scaling to fit")
+            return self.transform_image(image, target_width, target_height)
+
+        # Calculate scaled dimensions to cover target while maintaining AR
+        if source_ar > target_ar:
+            # Source is wider - fit to target height, width will be larger
+            scale_height = target_height
+            scale_width = int(target_height * source_ar)
+        else:
+            # Source is taller - fit to target width, height will be larger
+            scale_width = target_width
+            scale_height = int(target_width / source_ar)
+
+        logger.debug(f"Scaling to {scale_width}×{scale_height} (covers {target_width}×{target_height})")
+
+        # Scale image to cover target
+        scaled = self.transform_image(image, scale_width, scale_height)
+
+        # Center crop to target dimensions
+        if scale_width > target_width:
+            # Crop width
+            crop_left = (scale_width - target_width) // 2
+            crop_right = crop_left + target_width
+            output = scaled[:, :, crop_left:crop_right, :]
+            logger.debug(f"Cropped width from {scale_width} to {target_width} (left={crop_left})")
+        else:
+            # Crop height
+            crop_top = (scale_height - target_height) // 2
+            crop_bottom = crop_top + target_height
+            output = scaled[:, crop_top:crop_bottom, :, :]
+            logger.debug(f"Cropped height from {scale_height} to {target_height} (top={crop_top})")
+
+        # Verify output dimensions
+        assert output.shape[1] == target_height and output.shape[2] == target_width, \
+            f"Output dimensions mismatch: got {output.shape[2]}×{output.shape[1]}, expected {target_width}×{target_height}"
 
         return output
 
