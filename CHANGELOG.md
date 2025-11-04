@@ -5,6 +5,27 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2025-11-04
+
+### Changed
+- **Widget Rename**: "USE IMAGE?" renamed to "USE IMAGE DIMS?" for clarity
+  - Updated all code, tooltips, and documentation
+  - Makes it clear the toggle controls dimension extraction, not image output usage
+
+### Fixed
+- **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions when `custom_ratio` enabled
+  - Root cause: Tooltip only checked `aspect_ratio` dropdown, never `custom_ratio` toggle or `custom_aspect_ratio` text field
+  - Now checks `custom_ratio` first and uses `custom_aspect_ratio` when enabled
+  - Supports float ratios (e.g., "2.39:1", "1.85:1") for cinema formats
+  - Example fix: With custom ratio "5.225:2.25" and HEIGHT 1200, tooltip now correctly shows base ~2790×1200 (not 900×1200)
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Updated `ScaleWidget.calculatePreview()` to check `custom_ratio` toggle before using dropdown
+  - Parses `custom_aspect_ratio` with `parseFloat()` to support decimal ratios
+  - Falls back to dropdown if custom ratio invalid
+  - Added debug logging for aspect ratio source selection
+
 ## [0.3.5] - 2025-11-04
 
 ### Changed

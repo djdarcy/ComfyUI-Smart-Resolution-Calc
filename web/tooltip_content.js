@@ -17,12 +17,12 @@
 
 export const TOOLTIP_CONTENT = {
     /**
-     * USE IMAGE? widget (ImageModeWidget)
+     * USE IMAGE DIMS? widget (ImageModeWidget)
      * High Priority - Complex behavior with two extraction modes
      */
     image_mode: {
         quick: "Extract dimensions from image. AR Only: ratio | Exact Dims: exact",
-        full: "USE IMAGE extracts dimensions from connected image input.\n\n" +
+        full: "USE IMAGE DIMS extracts dimensions from connected image input.\n\n" +
               "• AR Only: Extracts aspect ratio, combines with your WIDTH, HEIGHT, & MEGAPIXEL setting.\n" +
               "• Exact Dims: Uses exact image resolution (overrides WIDTH/HEIGHT).\n\n" +
               "Tip: Connect image to auto-populate, or use Copy button for snapshot.",

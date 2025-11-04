@@ -789,16 +789,42 @@ class ScaleWidget {
             return null;
         }
 
-        // Parse aspect ratio from widget value (e.g., "16:9 (Panorama)" -> [16, 9])
+        // Check for custom ratio first (takes precedence over dropdown)
+        const customRatioToggle = node.widgets.find(w => w.name === "custom_ratio");
+        const customRatioText = node.widgets.find(w => w.name === "custom_aspect_ratio");
+
         let aspectW = 16, aspectH = 9;
-        if (aspectRatioWidget && aspectRatioWidget.value) {
-            const match = aspectRatioWidget.value.match(/(\d+):(\d+)/);
-            if (match) {
-                aspectW = parseInt(match[1]);
-                aspectH = parseInt(match[2]);
+        let aspectRatio;
+
+        if (customRatioToggle && customRatioToggle.value && customRatioText && customRatioText.value) {
+            // Custom ratio enabled - parse custom_aspect_ratio (supports floats like "2.39:1")
+            const customMatch = customRatioText.value.match(/([\d.]+):([\d.]+)/);
+            if (customMatch) {
+                aspectW = parseFloat(customMatch[1]);
+                aspectH = parseFloat(customMatch[2]);
+                aspectRatio = aspectW / aspectH;
+                logger.debug(`[ScaleWidget] Using custom aspect ratio: ${aspectW}:${aspectH} = ${aspectRatio.toFixed(3)}`);
+            } else {
+                // Invalid custom ratio - fall back to dropdown
+                logger.debug(`[ScaleWidget] Invalid custom ratio "${customRatioText.value}", falling back to dropdown`);
+                const match = aspectRatioWidget?.value?.match(/(\d+):(\d+)/);
+                if (match) {
+                    aspectW = parseInt(match[1]);
+                    aspectH = parseInt(match[2]);
+                }
+                aspectRatio = aspectW / aspectH;
             }
+        } else {
+            // Custom ratio not enabled - use dropdown aspect ratio
+            if (aspectRatioWidget && aspectRatioWidget.value) {
+                const match = aspectRatioWidget.value.match(/(\d+):(\d+)/);
+                if (match) {
+                    aspectW = parseInt(match[1]);
+                    aspectH = parseInt(match[2]);
+                }
+            }
+            aspectRatio = aspectW / aspectH;
         }
-        const aspectRatio = aspectW / aspectH;
 
         // Determine calculation mode and base dimensions
         let baseW, baseH, baseMp;
@@ -921,7 +947,8 @@ class ScaleWidget {
             baseW, baseH, baseMp,
             scaledW, scaledH,
             finalW, finalH, finalMp,
-            divisor
+            divisor,
+            aspectW, aspectH  // Include AR for tooltip display
         };
     }
 
@@ -1170,11 +1197,16 @@ class ScaleWidget {
 
         ctx.save();
 
+        // Format aspect ratio for display
+        const arDisplay = preview.aspectW && preview.aspectH
+            ? `${preview.aspectW}:${preview.aspectH}`
+            : 'unknown';
+
         // Tooltip content
         const lines = [
             `Scale: ${this.value.toFixed(2)}x`,
             `━━━━━━━━━━━━━━━━━━━━━━━━`,
-            `Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP)`,
+            `Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`,
             `  ↓`,
             `Scaled: ${preview.scaledW} × ${preview.scaledH}`,
             `After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`
@@ -1891,7 +1923,7 @@ class DimensionWidget {
 /**
  * Image Mode Widget
  * Compact widget with toggle (LEFT) and mode selector (RIGHT)
- * Answers the question "USE IMAGE?" with ON/OFF + AR Only/Exact Dims
+ * Answers the question "USE IMAGE DIMS?" with ON/OFF + AR Only/Exact Dims
  */
 class ImageModeWidget {
     constructor(name = "image_mode", config = {}) {
@@ -1931,7 +1963,7 @@ class ImageModeWidget {
 
     /**
      * Draw compact widget matching DimensionWidget style
-     * Layout: [Toggle] USE IMAGE? [AR Only/Exact Dims]
+     * Layout: [Toggle] USE IMAGE DIMS? [AR Only/Exact Dims]
      * Note: Visual appearance unchanged when disabled, only blocks clicks
      */
     draw(ctx, node, width, y, height) {
@@ -1959,8 +1991,8 @@ class ImageModeWidget {
 
         posX += toggleWidth + innerMargin * 2;
 
-        // Draw label (MIDDLE) - "USE IMAGE?"
-        const labelText = "USE IMAGE?";
+        // Draw label (MIDDLE) - "USE IMAGE DIMS?"
+        const labelText = "USE IMAGE DIMS?";
         ctx.fillStyle = this.value.on ? "#ffffff" : "#888888";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
