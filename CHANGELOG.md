@@ -14,23 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions and aspect ratio
-  - **Root cause**: Tooltip only checked `aspect_ratio` dropdown, never `custom_ratio` toggle, `custom_aspect_ratio` field, or USE IMAGE DIMS (AR Only) mode
-  - **Now handles all 3 AR sources correctly**:
+  - **Root cause**: Tooltip only checked `aspect_ratio` dropdown, never `custom_ratio` toggle, `custom_aspect_ratio` field, USE IMAGE DIMS (AR Only) mode, or WIDTH+HEIGHT explicit AR
+  - **Now handles all 4 AR sources correctly**:
     1. `custom_ratio` + `custom_aspect_ratio` (checked first)
     2. USE IMAGE DIMS (AR Only) - uses image aspect ratio
-    3. `aspect_ratio` dropdown (fallback)
+    3. WIDTH + HEIGHT (both enabled) - explicit aspect ratio from dimensions
+    4. `aspect_ratio` dropdown (fallback)
   - **Displays AR in tooltip**: Shows "(MP, AR)" format on Base line for clarity (e.g., "1.44 MP, 1:1 AR")
   - **Reduces AR to simplest form**: Uses GCD to show 1:1 instead of 1024:1024, matching Python backend behavior
   - **Supports float ratios**: Parses with `parseFloat()` for cinema formats (2.39:1, 1.85:1)
   - **Example fixes**:
     - Custom ratio "5.225:2.25" + HEIGHT 1200 → tooltip shows base ~2790×1200 (was 900×1200) with "5.225:2.25 AR"
     - USE IMAGE DIMS with 1024×1024 image → tooltip shows "1:1 AR" (was "3:4 AR" from dropdown)
+    - WIDTH=320 + HEIGHT=640 enabled → tooltip shows "1:2 AR" (was "3:4 AR" from dropdown)
 
 ### Technical
 - **JavaScript Changes** (`web/smart_resolution_calc.js`):
   - Updated `ScaleWidget.calculatePreview()` to check all aspect ratio sources in priority order
   - Added `aspectW` and `aspectH` to return value for tooltip display
   - Reduces image AR to simplest form using GCD when USE IMAGE DIMS enabled (both AR Only and Exact Dims modes)
+  - Reduces WIDTH+HEIGHT explicit AR to simplest form using GCD (e.g., 320:640 → 1:2)
   - Parses `custom_aspect_ratio` with `parseFloat()` to support decimal ratios
   - Falls back to dropdown if custom ratio invalid or not enabled
   - Added debug logging for aspect ratio source selection

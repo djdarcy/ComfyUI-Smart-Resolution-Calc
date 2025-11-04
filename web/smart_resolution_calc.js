@@ -879,6 +879,13 @@ class ScaleWidget {
                         // Both W+H specified - use as-is (ignore AR)
                         baseW = widthWidget.value.value;
                         baseH = heightWidget.value.value;
+
+                        // Update aspectW/aspectH for tooltip display (reduce to simplest form)
+                        const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+                        const divisor = gcd(baseW, baseH);
+                        aspectW = baseW / divisor;
+                        aspectH = baseH / divisor;
+
                         logger.verbose(`[ScaleWidget] Using user WIDTH+HEIGHT: ${baseW}×${baseH}`);
                     } else if (useWidth) {
                         // Width specified - calculate height from image AR
@@ -918,6 +925,12 @@ class ScaleWidget {
                 // Both W+H specified - use as-is
                 baseW = widthWidget.value.value;
                 baseH = heightWidget.value.value;
+
+                // Update aspectW/aspectH for tooltip display (reduce to simplest form)
+                const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+                const divisor = gcd(baseW, baseH);
+                aspectW = baseW / divisor;
+                aspectH = baseH / divisor;
             } else if (useWidth) {
                 // Width specified - calculate height from aspect ratio
                 baseW = widthWidget.value.value;
