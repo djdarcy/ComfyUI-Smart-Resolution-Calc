@@ -1,6 +1,6 @@
 # Image Input Guide
 
-**Version**: 0.3.5
+**Version**: 0.3.6
 **Feature**: Extract dimensions directly from reference images
 
 ## Overview
@@ -10,7 +10,7 @@ The image input feature allows you to connect images to the Smart Resolution Cal
 ## Quick Start
 
 1. Connect an IMAGE output to the `image` input on Smart Resolution Calculator
-2. Toggle **USE IMAGE?** to ON (enabled by default when image connected)
+2. Toggle **USE IMAGE DIMS?** to ON (enabled by default when image connected)
 3. Choose extraction mode:
    - **AR Only**: Extracts aspect ratio, combines with megapixel setting
    - **Exact Dims**: Uses exact image dimensions with scale applied
@@ -18,7 +18,7 @@ The image input feature allows you to connect images to the Smart Resolution Cal
 
 ## Parameters
 
-### USE IMAGE?
+### USE IMAGE DIMS?
 
 **Type**: Composite widget (toggle + mode selector)
 
@@ -48,7 +48,7 @@ The image input feature allows you to connect images to the Smart Resolution Cal
 - Best for: Precise dimension matching, upscaling workflows
 
 **Tooltip**:
-- *Hover over "USE IMAGE?" label for quick help*
+- *Hover over "USE IMAGE DIMS?" label for quick help*
 - *Shift+Click label for full documentation (opens this page)*
 
 ## Visual Indicators
