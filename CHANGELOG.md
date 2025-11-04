@@ -5,6 +5,28 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-11-04
+
+### Changed
+- **Code Modularization** (Issue #14 - partial): Extract DimensionSourceManager to separate module
+  - Main file reduced from 4,033 to 3,523 lines (-510 lines, -12.6%)
+  - Created `web/managers/dimension_source_manager.js` module (512 lines)
+  - Establishes `web/managers/` directory pattern for architectural components
+  - Uses ES6 `import/export` syntax for clean module loading
+  - Tests modularization pattern before full Issue #14 implementation
+  - Related: Issue #14 (full modularization plan)
+
+### Technical
+- **File Structure**:
+  - `web/smart_resolution_calc.js`: Import statement added at top
+  - `web/managers/dimension_source_manager.js`: Exported class with all 6 priority levels
+  - ComfyUI ES6 module loading confirmed compatible
+
+### Notes
+- **Testing required**: Manual testing in ComfyUI to verify module loading works
+- **Rollback available**: Can revert to v0.4.0 if module loading issues found
+- **Future work**: Full Issue #14 modularization planned for v0.6.0 (after v0.5.x features complete)
+
 ## [0.4.0] - 2025-11-04
 
 ### Added
