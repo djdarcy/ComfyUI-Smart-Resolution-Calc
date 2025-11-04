@@ -13,17 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Makes it clear the toggle controls dimension extraction, not image output usage
 
 ### Fixed
-- **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions when `custom_ratio` enabled
-  - Root cause: Tooltip only checked `aspect_ratio` dropdown, never `custom_ratio` toggle or `custom_aspect_ratio` text field
-  - Now checks `custom_ratio` first and uses `custom_aspect_ratio` when enabled
-  - Supports float ratios (e.g., "2.39:1", "1.85:1") for cinema formats
-  - Example fix: With custom ratio "5.225:2.25" and HEIGHT 1200, tooltip now correctly shows base ~2790×1200 (not 900×1200)
+- **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions and aspect ratio
+  - **Root cause**: Tooltip only checked `aspect_ratio` dropdown, never `custom_ratio` toggle, `custom_aspect_ratio` field, or USE IMAGE DIMS (AR Only) mode
+  - **Now handles all 3 AR sources correctly**:
+    1. `custom_ratio` + `custom_aspect_ratio` (checked first)
+    2. USE IMAGE DIMS (AR Only) - uses image aspect ratio
+    3. `aspect_ratio` dropdown (fallback)
+  - **Displays AR in tooltip**: Shows "(MP, AR)" format on Base line for clarity (e.g., "1.44 MP, 1:1 AR")
+  - **Reduces AR to simplest form**: Uses GCD to show 1:1 instead of 1024:1024, matching Python backend behavior
+  - **Supports float ratios**: Parses with `parseFloat()` for cinema formats (2.39:1, 1.85:1)
+  - **Example fixes**:
+    - Custom ratio "5.225:2.25" + HEIGHT 1200 → tooltip shows base ~2790×1200 (was 900×1200) with "5.225:2.25 AR"
+    - USE IMAGE DIMS with 1024×1024 image → tooltip shows "1:1 AR" (was "3:4 AR" from dropdown)
 
 ### Technical
 - **JavaScript Changes** (`web/smart_resolution_calc.js`):
-  - Updated `ScaleWidget.calculatePreview()` to check `custom_ratio` toggle before using dropdown
+  - Updated `ScaleWidget.calculatePreview()` to check all aspect ratio sources in priority order
+  - Added `aspectW` and `aspectH` to return value for tooltip display
+  - Reduces image AR to simplest form using GCD when USE IMAGE DIMS enabled (both AR Only and Exact Dims modes)
   - Parses `custom_aspect_ratio` with `parseFloat()` to support decimal ratios
-  - Falls back to dropdown if custom ratio invalid
+  - Falls back to dropdown if custom ratio invalid or not enabled
   - Added debug logging for aspect ratio source selection
 
 ## [0.3.5] - 2025-11-04

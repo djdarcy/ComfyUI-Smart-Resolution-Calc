@@ -844,6 +844,13 @@ class ScaleWidget {
                 // Exact Dims mode - use raw image dimensions (ignore all user settings)
                 baseW = this.imageDimensionsCache.width;
                 baseH = this.imageDimensionsCache.height;
+
+                // Update aspectW/aspectH for tooltip display (reduce to simplest form)
+                const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+                const divisor = gcd(this.imageDimensionsCache.width, this.imageDimensionsCache.height);
+                aspectW = this.imageDimensionsCache.width / divisor;
+                aspectH = this.imageDimensionsCache.height / divisor;
+
                 logger.info(`✓ Scale preview using exact image dimensions: ${baseW}×${baseH}`);
             } else {
                 // AR Only mode (imageMode === 0) - extract AR and use with user's dimension settings
@@ -861,6 +868,12 @@ class ScaleWidget {
                 } else {
                     // Use image AR with user's dimension settings
                     logger.debug(`[ScaleWidget] AR Only mode - using image AR: ${imageAR.toFixed(3)}`);
+
+                    // Update aspectW/aspectH for tooltip display (reduce to simplest form)
+                    const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+                    const divisor = gcd(this.imageDimensionsCache.width, this.imageDimensionsCache.height);
+                    aspectW = this.imageDimensionsCache.width / divisor;
+                    aspectH = this.imageDimensionsCache.height / divisor;
 
                     if (useWidth && useHeight) {
                         // Both W+H specified - use as-is (ignore AR)
