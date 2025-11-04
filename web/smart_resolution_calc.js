@@ -705,6 +705,10 @@ class ScaleWidget {
         this.isHovering = false;
         this.tooltipTimeout = null;
 
+        // Double-click detection for reset to 1.0x
+        this.lastClickTime = 0;
+        this.doubleClickThreshold = 300; // milliseconds
+
         // Hit areas
         this.hitAreas = {
             slider: { x: 0, y: 0, width: 0, height: 0 },
@@ -1512,10 +1516,25 @@ class ScaleWidget {
 
             // Check slider/handle click
             if (this.isInBounds(pos, this.hitAreas.slider) || this.isInBounds(pos, this.hitAreas.handle)) {
-                this.isDragging = true;
-                this.updateValueFromMouse(pos);
-                node.setDirtyCanvas(true);
-                return true;
+                // Double-click detection - reset to 1.0x
+                const currentTime = Date.now();
+                const timeSinceLastClick = currentTime - this.lastClickTime;
+
+                if (timeSinceLastClick < this.doubleClickThreshold) {
+                    // Double-click detected - reset to 1.0x
+                    this.value = 1.0;
+                    this.lastClickTime = 0; // Reset to prevent triple-click
+                    node.setDirtyCanvas(true);
+                    logger.info(`[ScaleWidget] Double-click detected - reset to 1.0x`);
+                    return true;
+                } else {
+                    // Single click - start dragging
+                    this.lastClickTime = currentTime;
+                    this.isDragging = true;
+                    this.updateValueFromMouse(pos);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
             }
         }
 

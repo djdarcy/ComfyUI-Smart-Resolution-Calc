@@ -5,7 +5,7 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.6] - 2025-11-04
+## [0.3.7] - 2025-11-04
 
 ### Changed
 - **Widget Rename**: "USE IMAGE?" renamed to "USE IMAGE DIMS?" for clarity
@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Examples: "9:16 (Slim Vertical)" → "9:16 (Vert Vids: YT Shorts/TikTok/Reels)", "16:9 (Panorama)" → "16:9 (HD Video/YouTube/TV)", "3:4 (Golden Ratio)" → "3:4 (SD Video Portrait)"
   - Added platform/format context: Instagram, photo print sizes, monitor standards, video platforms
   - Makes aspect ratio selection more intuitive for real-world use cases
+
+### Added
+- **SCALE Widget: Double-Click Reset** (Issue #13): Double-click anywhere on SCALE slider to instantly reset to 1.0x
+  - Works on both slider track and handle
+  - 300ms double-click detection threshold
+  - Quality of life improvement for quick reset without precise dragging
+  - Logs reset action for debugging
 
 ### Fixed
 - **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions and aspect ratio
