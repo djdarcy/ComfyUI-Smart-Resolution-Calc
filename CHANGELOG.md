@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Widget Rename**: "USE IMAGE?" renamed to "USE IMAGE DIMS?" for clarity
   - Updated all code, tooltips, and documentation
   - Makes it clear the toggle controls dimension extraction, not image output usage
+- **Aspect Ratio Labels**: Updated dropdown labels to be more quantifiable and platform-specific
+  - Replaced subjective flavor text with concrete use cases and standards
+  - Examples: "9:16 (Slim Vertical)" → "9:16 (Vert Vids: YT Shorts/TikTok/Reels)", "16:9 (Panorama)" → "16:9 (HD Video/YouTube/TV)", "3:4 (Golden Ratio)" → "3:4 (SD Video Portrait)"
+  - Added platform/format context: Instagram, photo print sizes, monitor standards, video platforms
+  - Makes aspect ratio selection more intuitive for real-world use cases
 
 ### Fixed
 - **SCALE Tooltip Aspect Ratio Bug** (Issue #11): Fixed tooltip showing incorrect base dimensions and aspect ratio
