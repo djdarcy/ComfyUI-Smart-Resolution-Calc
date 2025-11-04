@@ -2132,6 +2132,181 @@ class ImageModeWidget {
 }
 
 /**
+ * Color Picker Button Widget
+ * Custom widget that displays a color palette in canvas space for reliable positioning
+ */
+class ColorPickerButton {
+    constructor(name = "color_picker_button", fillColorWidget) {
+        this.name = name;
+        this.type = "custom";  // Must be "custom" for addCustomWidget to route mouse events
+        this.value = null;  // Buttons don't need a value
+        this.fillColorWidget = fillColorWidget;  // Reference to fill_color widget for value storage
+
+        // State
+        this.isHoveringButton = false;
+    }
+
+    draw(ctx, node, width, y, height) {
+        ctx.save();
+
+        const x = 15;  // Standard widget left margin
+        const buttonHeight = 28;
+        const buttonWidth = width - 30;
+
+        // Get current color
+        const currentColor = this.fillColorWidget.value || "#808080";
+        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+
+        // Helper to get contrasting text color
+        const getContrastColor = (hexColor) => {
+            const hex = hexColor.replace('#', '');
+            const r = parseInt(hex.substr(0, 2), 16);
+            const g = parseInt(hex.substr(2, 2), 16);
+            const b = parseInt(hex.substr(4, 2), 16);
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            return luminance > 0.5 ? '#000000' : '#FFFFFF';
+        };
+
+        const contrastColor = getContrastColor(normalizedColor);
+
+        // === Draw Button ===
+
+        // Button background (current color)
+        ctx.fillStyle = normalizedColor;
+        ctx.fillRect(x, y, buttonWidth, buttonHeight);
+
+        // Button border
+        ctx.strokeStyle = this.isHoveringButton ? "#888" : "#666";
+        ctx.lineWidth = this.isHoveringButton ? 2 : 1;
+        ctx.strokeRect(x, y, buttonWidth, buttonHeight);
+
+        // Button text
+        ctx.fillStyle = contrastColor;
+        ctx.font = "12px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, x + buttonWidth / 2, y + buttonHeight / 2);
+
+        // Store button hit area
+        this.hitAreaButton = { x, y, width: buttonWidth, height: buttonHeight };
+
+        ctx.restore();
+    }
+
+    mouse(event, pos, node) {
+        if (event.type === "pointermove") {
+            // Check button hover
+            const wasHoveringButton = this.isHoveringButton;
+            this.isHoveringButton = this.isInBounds(pos, this.hitAreaButton);
+            if (this.isHoveringButton !== wasHoveringButton) {
+                node.setDirtyCanvas(true);
+            }
+            return false;
+        }
+
+        if (event.type === "pointerdown") {
+            // Check button click (open native color picker)
+            if (this.isInBounds(pos, this.hitAreaButton)) {
+                visibilityLogger.debug('[ColorPicker] Button clicked, opening native picker');
+
+                const currentColor = this.fillColorWidget.value || "#808080";
+                const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+
+                // Create native color input positioned at viewport center for reliability
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+
+                visibilityLogger.debug(`[ColorPicker] Viewport center: (${centerX}, ${centerY})`);
+
+                const colorInput = document.createElement("input");
+                colorInput.type = "color";
+                colorInput.value = normalizedColor;
+                colorInput.style.position = "fixed";
+                colorInput.style.left = centerX + "px";
+                colorInput.style.top = centerY + "px";
+                colorInput.style.transform = "translate(-50%, -50%)";
+                colorInput.style.width = "50px";
+                colorInput.style.height = "50px";
+                colorInput.style.border = "2px solid #666";
+                colorInput.style.borderRadius = "4px";
+                colorInput.style.cursor = "pointer";
+                colorInput.style.zIndex = "10000";
+                document.body.appendChild(colorInput);
+
+                let pickerClosed = false;
+
+                // Handle color selection
+                const handleChange = (e) => {
+                    if (pickerClosed) return;
+                    pickerClosed = true;
+                    this.fillColorWidget.value = e.target.value;
+                    visibilityLogger.debug(`[ColorPicker] Color selected: ${e.target.value}`);
+                    node.setDirtyCanvas(true, true);
+                    if (colorInput.parentNode) {
+                        document.body.removeChild(colorInput);
+                    }
+                };
+
+                // Handle cancellation (ESC key or click outside)
+                const handleCancel = (e) => {
+                    if (pickerClosed) return;
+                    // Give the picker time to fully open before allowing cancellation
+                    setTimeout(() => {
+                        if (pickerClosed) return;
+                        if (e.type === 'keydown' && e.key === 'Escape') {
+                            pickerClosed = true;
+                            visibilityLogger.debug('[ColorPicker] Cancelled via ESC key');
+                            if (colorInput.parentNode) {
+                                document.body.removeChild(colorInput);
+                            }
+                        }
+                    }, 200);
+                };
+
+                // Handle blur with delay to allow picker to open
+                const handleBlur = () => {
+                    setTimeout(() => {
+                        if (pickerClosed) return;
+                        if (colorInput.parentNode && document.activeElement !== colorInput) {
+                            pickerClosed = true;
+                            visibilityLogger.debug('[ColorPicker] Picker closed (blur)');
+                            document.body.removeChild(colorInput);
+                        }
+                    }, 500);  // Longer delay to prevent immediate closure
+                };
+
+                colorInput.addEventListener("change", handleChange);
+                colorInput.addEventListener("keydown", handleCancel);
+                colorInput.addEventListener("blur", handleBlur);
+
+                // Open native picker with delay to ensure DOM is ready
+                setTimeout(() => {
+                    if (!pickerClosed) {
+                        colorInput.click();
+                        colorInput.focus();
+                    }
+                }, 50);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    isInBounds(pos, bounds) {
+        return pos[0] >= bounds.x &&
+               pos[0] <= bounds.x + bounds.width &&
+               pos[1] >= bounds.y &&
+               pos[1] <= bounds.y + bounds.height;
+    }
+
+    computeSize(width) {
+        return [width, 28];
+    }
+}
+
+/**
  * Copy from Image Button Widget
  * Simple button to extract dimensions from connected image and populate widgets
  */
@@ -2673,106 +2848,11 @@ app.registerExtension({
                         fillColorWidget.value = "#808080";
                     }
 
-                    // Helper function to calculate contrasting text color
-                    const getContrastColor = (hexColor) => {
-                        // Remove # if present
-                        const hex = hexColor.replace('#', '');
-                        // Convert to RGB
-                        const r = parseInt(hex.substr(0, 2), 16);
-                        const g = parseInt(hex.substr(2, 2), 16);
-                        const b = parseInt(hex.substr(4, 2), 16);
-                        // Calculate luminance
-                        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-                        // Return black for light colors, white for dark colors
-                        return luminance > 0.5 ? '#000000' : '#FFFFFF';
-                    };
+                    // Create custom color picker button widget (canvas-space rendering for reliable positioning)
+                    const colorPickerButton = new ColorPickerButton("color_picker_button", fillColorWidget);
+                    this.addCustomWidget(colorPickerButton);
 
-                    // Create button widget for color picker
-                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, () => {
-                        visibilityLogger.debug('[ColorPicker] Button clicked!');
-                        visibilityLogger.debug('[ColorPicker] fillColorWidget:', fillColorWidget);
-                        visibilityLogger.debug('[ColorPicker] fillColorWidget defined?', typeof fillColorWidget !== 'undefined');
-
-                        const currentColor = fillColorWidget.value || "#808080";
-                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-
-                        visibilityLogger.debug('[ColorPicker] Button clicked, opening picker');
-
-                        // Position color picker in center of viewport for reliability and consistency
-                        // Trade-off: Not positioned near button, but predictable and works across all zoom/pan states
-                        const centerX = window.innerWidth / 2;
-                        const centerY = window.innerHeight / 2;
-
-                        visibilityLogger.debug(`[ColorPicker] Viewport dimensions: ${window.innerWidth} x ${window.innerHeight}`);
-                        visibilityLogger.debug(`[ColorPicker] Calculated center: (${centerX}, ${centerY})`);
-
-                        const screenX = centerX;
-                        const screenY = centerY;
-
-                        visibilityLogger.debug(`[ColorPicker] Final position: (${screenX}, ${screenY})`);
-
-                        // Create color input positioned at viewport center
-                        const colorInput = document.createElement("input");
-                        colorInput.type = "color";
-                        colorInput.value = normalizedColor;
-                        colorInput.style.position = "fixed";
-                        colorInput.style.left = screenX + "px";
-                        colorInput.style.top = screenY + "px";
-                        colorInput.style.transform = "translate(-50%, -50%)"; // Center on the point
-                        colorInput.style.width = "50px";
-                        colorInput.style.height = "50px";
-                        colorInput.style.border = "none";
-                        colorInput.style.opacity = "0"; // Invisible but positioned
-                        colorInput.style.pointerEvents = "auto";
-                        document.body.appendChild(colorInput);
-
-                        // Handle color selection
-                        colorInput.addEventListener("change", (e) => {
-                            fillColorWidget.value = e.target.value;
-                            this.setDirtyCanvas(true, true);
-                            visibilityLogger.debug(`Color selected: ${e.target.value}`);
-                            document.body.removeChild(colorInput);
-                        });
-
-                        // Handle cancellation
-                        colorInput.addEventListener("blur", () => {
-                            setTimeout(() => {
-                                if (colorInput.parentNode) {
-                                    document.body.removeChild(colorInput);
-                                    visibilityLogger.debug('Color picker cancelled');
-                                }
-                            }, 100);
-                        });
-
-                        // Open color picker
-                        colorInput.click();
-                        colorInput.focus();
-                    });
-
-                    // Custom draw to show current color
-                    colorPickerButton.draw = function(ctx, node, width, y, height) {
-                        const currentColor = fillColorWidget.value || "#808080";
-                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-                        const contrastColor = getContrastColor(normalizedColor);
-
-                        // Draw color preview background
-                        ctx.fillStyle = normalizedColor;
-                        ctx.fillRect(0, y, width, height);
-
-                        // Draw border
-                        ctx.strokeStyle = "#666";
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(0, y, width, height);
-
-                        // Draw text: emoji + hex value
-                        ctx.fillStyle = contrastColor;
-                        ctx.font = "12px monospace";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, width / 2, y + height / 2);
-                    };
-
-                    // addWidget() automatically adds to end of array, so remove it first
+                    // addCustomWidget() automatically adds to end of array, so remove it first
                     const addedIndex = this.widgets.indexOf(colorPickerButton);
                     if (addedIndex !== -1) {
                         this.widgets.splice(addedIndex, 1);
