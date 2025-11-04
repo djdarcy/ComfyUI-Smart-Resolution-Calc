@@ -2620,6 +2620,22 @@ app.registerExtension({
                     fill_type: this.widgets.find(w => w.name === "fill_type")
                 };
 
+                // Debug: Log initial widget references to verify correct widgets found
+                visibilityLogger.debug('[WidgetInit] Initial widget references:', {
+                    output_image_mode: {
+                        name: this.imageOutputWidgets.output_image_mode?.name,
+                        type: this.imageOutputWidgets.output_image_mode?.type,
+                        value: this.imageOutputWidgets.output_image_mode?.value,
+                        index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
+                    },
+                    fill_type: {
+                        name: this.imageOutputWidgets.fill_type?.name,
+                        type: this.imageOutputWidgets.fill_type?.type,
+                        value: this.imageOutputWidgets.fill_type?.value,
+                        index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
+                    }
+                });
+
                 // Store original widget types, indices, and default values for restore
                 this.imageOutputWidgetIndices = {};
                 this.imageOutputWidgetValues = {
@@ -2680,51 +2696,34 @@ app.registerExtension({
                         const currentColor = fillColorWidget.value || "#808080";
                         const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
 
-                        visibilityLogger.debug('Color picker button clicked, opening picker');
+                        visibilityLogger.debug('[ColorPicker] Button clicked, opening picker');
 
-                        // Convert canvas coordinates to screen coordinates
-                        const canvas = this.graph?.list_of_graphcanvas?.[0];
-                        visibilityLogger.debug('[ColorPicker] graph:', this.graph);
-                        visibilityLogger.debug('[ColorPicker] list_of_graphcanvas:', this.graph?.list_of_graphcanvas);
-                        visibilityLogger.debug('[ColorPicker] canvas:', canvas);
-                        visibilityLogger.debug('[ColorPicker] canvas.ds:', canvas?.ds);
+                        // Position color picker in center of viewport for reliability and consistency
+                        // Trade-off: Not positioned near button, but predictable and works across all zoom/pan states
+                        const centerX = window.innerWidth / 2;
+                        const centerY = window.innerHeight / 2;
 
-                        let screenX = 200; // Default fallback position
-                        let screenY = 200;
+                        visibilityLogger.debug(`[ColorPicker] Viewport dimensions: ${window.innerWidth} x ${window.innerHeight}`);
+                        visibilityLogger.debug(`[ColorPicker] Calculated center: (${centerX}, ${centerY})`);
 
-                        if (canvas && canvas.ds) {
-                            // canvas.ds contains the transform: scale and offset
-                            const nodePos = this.pos;
-                            const buttonIndex = this.widgets.indexOf(colorPickerButton);
+                        const screenX = centerX;
+                        const screenY = centerY;
 
-                            // Estimate button Y position in canvas space
-                            let buttonCanvasY = nodePos[1] + 80; // Node header height
-                            for (let i = 0; i < buttonIndex; i++) {
-                                buttonCanvasY += 30; // Approximate widget height
-                            }
+                        visibilityLogger.debug(`[ColorPicker] Final position: (${screenX}, ${screenY})`);
 
-                            // Convert canvas coordinates to screen coordinates
-                            // screenCoord = (canvasCoord * scale) + offset
-                            screenX = (nodePos[0] * canvas.ds.scale) + canvas.ds.offset[0] + 50;
-                            screenY = (buttonCanvasY * canvas.ds.scale) + canvas.ds.offset[1];
-
-                            visibilityLogger.debug(`Positioning picker at screen (${screenX}, ${screenY}) from canvas (${nodePos[0]}, ${buttonCanvasY})`);
-                        } else {
-                            visibilityLogger.debug('Canvas transform not available, using default position');
-                        }
-
-                        // Create color input positioned near the button
+                        // Create color input positioned at viewport center
                         const colorInput = document.createElement("input");
                         colorInput.type = "color";
                         colorInput.value = normalizedColor;
-                        colorInput.style.position = "fixed"; // Use fixed positioning
+                        colorInput.style.position = "fixed";
                         colorInput.style.left = screenX + "px";
                         colorInput.style.top = screenY + "px";
+                        colorInput.style.transform = "translate(-50%, -50%)"; // Center on the point
                         colorInput.style.width = "50px";
                         colorInput.style.height = "50px";
                         colorInput.style.border = "none";
-                        colorInput.style.opacity = "0"; // Still invisible, but positioned
-                        colorInput.style.pointerEvents = "auto"; // Allow interaction
+                        colorInput.style.opacity = "0"; // Invisible but positioned
+                        colorInput.style.pointerEvents = "auto";
                         document.body.appendChild(colorInput);
 
                         // Handle color selection
@@ -2773,7 +2772,13 @@ app.registerExtension({
                         ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, width / 2, y + height / 2);
                     };
 
-                    // Insert button right after fill_color widget (not at end)
+                    // addWidget() automatically adds to end of array, so remove it first
+                    const addedIndex = this.widgets.indexOf(colorPickerButton);
+                    if (addedIndex !== -1) {
+                        this.widgets.splice(addedIndex, 1);
+                    }
+
+                    // Insert button right after fill_color widget
                     const fillColorIndex = this.widgets.indexOf(fillColorWidget);
                     this.widgets.splice(fillColorIndex + 1, 0, colorPickerButton);
 
@@ -2808,42 +2813,105 @@ app.registerExtension({
 
                     // Show/hide widgets based on connection status
                     if (hasConnection) {
-                        // When showing, restore widgets relative to fill_color (which never moves)
-                        const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
-                        const fillColorIndex = fillColorWidget ? this.widgets.indexOf(fillColorWidget) : -1;
+                        // SOLUTION 5: Hybrid Anchor + Sequential Insertion
+                        // Use batch_size as stable anchor, insert sequentially to account for index shifts
 
-                        if (fillColorIndex === -1) {
-                            visibilityLogger.error("Cannot find fill_color widget for relative positioning");
+                        const batchSizeWidget = this.widgets.find(w => w.name === "batch_size");
+                        const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
+                        const batchSizeIndex = batchSizeWidget ? this.widgets.indexOf(batchSizeWidget) : -1;
+
+                        if (batchSizeIndex === -1) {
+                            visibilityLogger.error("Cannot find batch_size widget anchor");
                             return;
                         }
 
-                        // Define relative positions (offset from fill_color)
-                        const relativePositions = {
-                            'output_image_mode': -2,  // Two positions before fill_color
-                            'fill_type': -1,          // One position before fill_color
-                            'color_picker_button': 1  // One position after fill_color
-                        };
+                        visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
+                        visibilityLogger.debug('[WidgetRestore] Widget references:', {
+                            output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
+                            fill_type: this.imageOutputWidgets.fill_type?.name,
+                            color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
+                        });
+                        visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
 
-                        // Show widgets in order (most negative offset first)
-                        const widgetsToShow = Object.keys(this.imageOutputWidgets)
-                            .filter(key => this.imageOutputWidgets[key] && this.widgets.indexOf(this.imageOutputWidgets[key]) === -1)
-                            .sort((a, b) => relativePositions[a] - relativePositions[b]);
+                        // Start inserting after batch_size
+                        let currentIndex = batchSizeIndex + 1;
 
-                        widgetsToShow.forEach(key => {
-                            const widget = this.imageOutputWidgets[key];
-                            const currentFillColorIndex = this.widgets.indexOf(fillColorWidget);
-                            const targetIndex = currentFillColorIndex + relativePositions[key];
-
-                            // Restore value before adding (but only if it's a primitive, not object)
-                            const savedValue = this.imageOutputWidgetValues[key];
+                        // 1. Insert output_image_mode first
+                        const outputWidget = this.imageOutputWidgets.output_image_mode;
+                        visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
+                            name: outputWidget?.name,
+                            type: outputWidget?.type,
+                            value: outputWidget?.value,
+                            options: outputWidget?.options?.values
+                        });
+                        if (outputWidget && this.widgets.indexOf(outputWidget) === -1) {
+                            // Restore saved value
+                            const savedValue = this.imageOutputWidgetValues.output_image_mode;
                             if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                widget.value = savedValue;
+                                outputWidget.value = savedValue;
                             }
 
-                            this.widgets.splice(targetIndex, 0, widget);
-                            widget.type = widget.origType || "combo";
-                            visibilityLogger.debug(`Widget ${key} shown at index ${targetIndex} (fill_color at ${currentFillColorIndex}), value: ${widget.value}`);
+                            this.widgets.splice(currentIndex, 0, outputWidget);
+                            outputWidget.type = outputWidget.origType || "combo";
+                            visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            currentIndex++; // Move insertion point forward
+                        } else if (outputWidget) {
+                            // Already visible, update currentIndex to point after it
+                            const existingIndex = this.widgets.indexOf(outputWidget);
+                            if (existingIndex >= currentIndex) {
+                                currentIndex = existingIndex + 1;
+                            }
+                            visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                        }
+
+                        // 2. Insert fill_type second
+                        const fillTypeWidget = this.imageOutputWidgets.fill_type;
+                        visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
+                            name: fillTypeWidget?.name,
+                            type: fillTypeWidget?.type,
+                            value: fillTypeWidget?.value,
+                            options: fillTypeWidget?.options?.values
                         });
+                        if (fillTypeWidget && this.widgets.indexOf(fillTypeWidget) === -1) {
+                            // Restore saved value
+                            const savedValue = this.imageOutputWidgetValues.fill_type;
+                            if (savedValue !== undefined && typeof savedValue !== 'object') {
+                                fillTypeWidget.value = savedValue;
+                            }
+
+                            this.widgets.splice(currentIndex, 0, fillTypeWidget);
+                            fillTypeWidget.type = fillTypeWidget.origType || "combo";
+                            visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            currentIndex++; // Move insertion point forward
+                        } else if (fillTypeWidget) {
+                            // Already visible, update currentIndex to point after it
+                            const existingIndex = this.widgets.indexOf(fillTypeWidget);
+                            if (existingIndex >= currentIndex) {
+                                currentIndex = existingIndex + 1;
+                            }
+                            visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                        }
+
+                        // 3. fill_color should already be in array (invisible)
+                        //    Find it and position button after it
+                        const fillColorIndex = fillColorWidget ? this.widgets.indexOf(fillColorWidget) : -1;
+                        if (fillColorIndex !== -1) {
+                            currentIndex = fillColorIndex + 1;
+                            visibilityLogger.debug(`fill_color found at index ${fillColorIndex}, button will go at ${currentIndex}`);
+
+                            // 4. Insert color picker button
+                            const buttonWidget = this.imageOutputWidgets.color_picker_button;
+                            if (buttonWidget && this.widgets.indexOf(buttonWidget) === -1) {
+                                // Button widget doesn't have a primitive value to restore
+                                this.widgets.splice(currentIndex, 0, buttonWidget);
+                                buttonWidget.type = buttonWidget.origType || "button";
+                                visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}`);
+                            } else if (buttonWidget) {
+                                visibilityLogger.debug(`color_picker_button already visible at ${this.widgets.indexOf(buttonWidget)}`);
+                            }
+                        } else {
+                            visibilityLogger.error("Cannot find fill_color for button placement");
+                        }
                     } else {
                         // When hiding, remove in reverse order to avoid index shifts
                         visibilityLogger.debug('HIDING WIDGETS - hasConnection is false');
