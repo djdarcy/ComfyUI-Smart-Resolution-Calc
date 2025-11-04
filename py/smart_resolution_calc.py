@@ -79,7 +79,7 @@ class SmartResolutionCalc:
                 "scale": ("FLOAT", {
                     "default": 1.0,
                     "min": 0.0,
-                    "max": 10.0,
+                    "max": 7.0,
                     "step": 0.1,
                     "display": "slider"
                 }),
@@ -385,8 +385,8 @@ class SmartResolutionCalc:
         scale = max(0.0, scale)
 
         # Warn if scale is very high
-        if scale > 10.0:
-            logger.warning(f"Scale {scale}x exceeds recommended maximum (10x). This may cause out-of-memory errors.")
+        if scale > 7.0:
+            logger.warning(f"Scale {scale}x exceeds recommended maximum (7x). This may cause out-of-memory errors.")
             print(f"[SmartResCalc] WARNING: Scale {scale}x is very high and may exceed GPU limits")
 
         # Apply scale to base dimensions

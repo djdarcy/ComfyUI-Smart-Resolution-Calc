@@ -676,7 +676,7 @@ const ImageDimensionUtils = {
 /**
  * Custom scale multiplier widget
  * Features:
- * - 1.0x visually centered (asymmetric: 30% for 0-1.0, 70% for 1.0-10.0)
+ * - 1.0x visually centered (asymmetric: 30% for 0-1.0, 70% for 1.0-7.0)
  * - Variable steps (0.05 below 1.0, 0.1 above)
  * - Click numeric value to edit
  * - Muted appearance at 1.0 (neutral/inactive state)
@@ -687,12 +687,12 @@ class ScaleWidget {
         this.type = "custom";
         this.value = defaultValue;
         this.min = 0.0;
-        this.max = 10.0;
+        this.max = 7.0;
 
-        // Visual layout: 0-1.0 takes 30% of slider, 1.0-10.0 takes 70%
+        // Visual layout: 0-1.0 takes 30% of slider, 1.0-7.0 takes 70%
         this.centerPoint = 1.0;
         this.leftPortion = 0.3;  // 30% for 0-1.0
-        this.rightPortion = 0.7; // 70% for 1.0-10.0
+        this.rightPortion = 0.7; // 70% for 1.0-7.0
 
         // Configurable step sizes
         this.leftStep = 0.05;   // Step size below 1.0x
@@ -744,7 +744,7 @@ class ScaleWidget {
             const ratio = value / this.centerPoint;
             return ratio * this.leftPortion * sliderWidth;
         } else {
-            // Right side: 1.0 to 10.0 maps to 30% to 100% of slider
+            // Right side: 1.0 to 7.0 maps to 30% to 100% of slider
             const ratio = (value - this.centerPoint) / (this.max - this.centerPoint);
             return (this.leftPortion + ratio * this.rightPortion) * sliderWidth;
         }
@@ -760,7 +760,7 @@ class ScaleWidget {
             // Left side: 0% to 30% maps to 0 to 1.0
             return (ratio / this.leftPortion) * this.centerPoint;
         } else {
-            // Right side: 30% to 100% maps to 1.0 to 10.0
+            // Right side: 30% to 100% maps to 1.0 to 7.0
             return this.centerPoint + ((ratio - this.leftPortion) / this.rightPortion) * (this.max - this.centerPoint);
         }
     }
@@ -1633,8 +1633,23 @@ class DimensionWidget {
         this.hitAreas.toggle = { x: posX, y: y, width: toggleWidth, height: height };
         posX += toggleWidth + innerMargin * 2;
 
-        // Draw label
-        ctx.fillStyle = this.value.on ? "#ffffff" : "#888888";
+        // Draw label with special handling for megapixel default state
+        let labelColor = this.value.on ? "#ffffff" : "#888888";
+
+        // If megapixel is disabled but acting as default (no other dimensions active), make it whiter
+        if (!this.value.on && this.name === "dimension_megapixel") {
+            const widthWidget = node.widgets.find(w => w.name === "dimension_width");
+            const heightWidget = node.widgets.find(w => w.name === "dimension_height");
+            const widthActive = widthWidget?.value?.on ?? false;
+            const heightActive = heightWidget?.value?.on ?? false;
+
+            // If no other dimensions are constraining, megapixel is the default
+            if (!widthActive && !heightActive) {
+                labelColor = "#dddddd";  // Whiter to indicate it's active as default
+            }
+        }
+
+        ctx.fillStyle = labelColor;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.font = "13px sans-serif";  // Slightly smaller for compact layout
