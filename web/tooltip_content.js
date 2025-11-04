@@ -35,10 +35,12 @@ export const TOOLTIP_CONTENT = {
      * High Priority - Unfamiliar terminology, future feature coming
      */
     megapixel: {
-        quick: "Target resolution in millions of pixels (1MP = 1024×1024)",
+        quick: "Target resolution in millions of pixels (DEFAULT is 1MP = 1024×1024)",
         full: "MEGAPIXEL sets target image resolution.\n\n" +
               "Combined with aspect ratio to calculate WIDTH and HEIGHT.\n" +
               "Example: 2MP at 16:9 = 1920×1080\n\n" +
+              "When disabled: Defaults to 1.0 MP as baseline for aspect ratio calculations.\n" +
+              "When enabled: Uses your specified value.\n\n" +
               "Future: If WIDTH + HEIGHT + MEGAPIXEL all set, treats W:H as aspect ratio and scales using MEGAPIXEL.",
         docsUrl: null, // Add when docs exist
         hoverDelay: 250

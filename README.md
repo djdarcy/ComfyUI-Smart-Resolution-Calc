@@ -18,10 +18,16 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 ## Features
 
 - **Image dimension extraction** - Connect images to auto-extract aspect ratio or exact dimensions ([detailed guide](docs/image-input.md))
+- **IMAGE output with transform modes** - Generate or transform images with 4 distinct strategies:
+  - **transform (distort)**: Scale to exact dimensions (stretch/squash to fit)
+  - **transform (crop/pad)**: Pure crop/pad at original 1:1 scale (no scaling)
+  - **transform (scale/crop)**: Scale to cover target, crop excess (maintains aspect ratio)
+  - **transform (scale/pad)**: Scale to fit inside target, pad remainder (maintains aspect ratio)
+- **Empty image generation** - Create images with 5 fill patterns (black, white, custom color, noise, random)
 - **Interactive tooltips** - Hover over widget labels for quick help, extended explanations, and links to documentation
 - **One-click resolution setup** - Toggle dimensions you want, node calculates the rest
 - **5 calculation modes** - Width+Height, Width+AR, Height+AR, Megapixels+AR, or defaults
-- **Scale multiplier** - Scale dimensions up/down (0-10x) with custom widget and real-time preview
+- **Scale multiplier** - Scale dimensions up/down (0-7x) with custom widget and real-time preview
 - **Compact custom widgets** - rgthree-style controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
@@ -146,9 +152,12 @@ Connect an IMAGE output to automatically extract dimensions or aspect ratio. See
 - `width` (INT) - Final width after divisibility rounding
 - `height` (INT) - Final height after divisibility rounding
 - `resolution` (STRING) - Formatted string (e.g., "1920 x 1080")
-- `preview` (IMAGE) - Visual preview with dimensions and aspect ratio
+- `preview` (IMAGE) - Visual grid preview with dimensions and aspect ratio overlay
+- `image` (IMAGE) - Generated or transformed image at calculated dimensions (4 transform modes + empty)
 - `latent` (LATENT) - Ready-to-use latent tensor for sampling
 - `info` (STRING) - Calculation mode and computed values
+
+**Note**: `preview` is always a visualization grid, while `image` is the actual generated/transformed image output.
 
 ## How It Works
 

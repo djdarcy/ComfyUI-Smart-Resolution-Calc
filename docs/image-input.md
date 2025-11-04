@@ -1,6 +1,6 @@
 # Image Input Guide
 
-**Version**: 0.2.0-beta
+**Version**: 0.3.5
 **Feature**: Extract dimensions directly from reference images
 
 ## Overview
@@ -21,7 +21,9 @@ The image input feature allows you to connect images to the Smart Resolution Cal
 ### USE IMAGE?
 
 **Type**: Composite widget (toggle + mode selector)
+
 **Default**: ON with "AR Only" mode
+
 **Purpose**: Control image dimension extraction and mode
 
 **Widget Components**:
@@ -82,7 +84,9 @@ From Image (Exact: 1920×1080) @ 0.5x | Mode: Width + Height | W: 960 × H: 540 
 ## Copy from Image Button
 
 **Feature**: 📋 Copy from Image button
+
 **Location**: Right after `use_image_dimensions` toggle in node
+
 **Purpose**: Snapshot workflow - extract dimensions once, then manually adjust
 
 ### Button States

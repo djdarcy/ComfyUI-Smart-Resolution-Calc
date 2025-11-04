@@ -5,6 +5,84 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2025-11-04
+
+### Changed
+- **Documentation Updates**: Complete documentation for v0.3.x feature set
+  - CHANGELOG.md: Documented all transform modes and color picker fixes from v0.3.4
+  - README.md: Updated features list with 4 transform modes and IMAGE output details
+  - docs/image-input.md: Updated version number
+- **Version Bump**: Incremented to v0.3.5 for documentation completion
+
+### Notes
+This is a documentation-only release. All functionality was implemented in v0.3.4.
+
+## [0.3.4] - 2025-11-04
+
+### Added
+- **Complete Transform Mode Suite**: Four distinct image transformation strategies for IMAGE output (Issue #4)
+  - **transform (distort)**: Scale to exact dimensions, ignores aspect ratio (stretch/squash to fit)
+  - **transform (crop/pad)**: Pure crop/pad at 1:1 scale, NO scaling applied
+  - **transform (scale/crop)**: Scale to cover target maintaining AR, crop excess
+  - **transform (scale/pad)**: Scale to fit inside target maintaining AR, pad remainder
+- **Smart Mode Selection**: Enhanced "auto" mode defaults to "transform (distort)" when image input detected
+- **Enhanced Tooltips**: Clear descriptions for each transform mode explaining behavior and use cases
+
+### Fixed
+- **Color Picker Button Positioning**: Fixed duplicate widget insertion causing position drift (from index 9 to 15+)
+  - Root cause: `addWidget()` appends to end, then `splice()` re-inserted, creating duplicate references
+  - Solution: Remove from auto-inserted position before manual positioning
+  - Button now stable at correct index across all connection cycles
+- **Color Picker Button Unclickable After Hide/Restore**: Fixed `origType` preservation issue
+  - Root cause: `origType` save loop ran before button creation, button never got `type = "custom"` preserved
+  - Solution: Moved `origType` save loop after all widget creation
+  - Button now immediately clickable and remains clickable through all hide/restore cycles
+- **Color Picker Positioning**: Picker now appears at mouse position + 100px offset (with edge detection)
+  - Previously appeared at 0,0 or viewport center
+  - Smart boundary detection prevents picker going off-screen
+- **Widget Value Contamination**: Resolved as side effect of fixing button position drift
+  - Values no longer swap between widgets during initial creation
+
+### Technical (Backend)
+- **Updated Parameters** (`py/smart_resolution_calc.py`):
+  - `output_image_mode`: Expanded from 3 to 6 options (auto, empty, 4 transform modes)
+  - Enhanced tooltip documentation for all modes
+- **New Methods**:
+  - `transform_image_scale_pad()`: Scales to fit inside, pads remainder (lines 606-681)
+  - `transform_image_crop_pad()`: Pure crop/pad with NO scaling (lines 683-784)
+  - `transform_image_scale_crop()`: Scales to cover, crops excess (lines 786-863)
+- **Renamed Method**:
+  - `transform_image_crop_pad()` → `transform_image_scale_pad()` (accurate naming)
+- **Implementation Details**:
+  - All modes maintain input batch size
+  - Center alignment for crop/pad operations
+  - Exact target dimension output guaranteed
+  - Aspect ratio preservation for scale/crop and scale/pad modes
+  - Debug logging for transform strategy details
+
+### Transform Mode Examples (1024×1024 → 1885×530)
+1. **distort**: Direct scale to 1885×530 (stretched/squashed)
+2. **crop/pad**: Keep 1024×530 centered, pad 431px left/right (1:1 original scale)
+3. **scale/crop**: Scale to 1885×1885 (cover width), crop 677px top/bottom
+4. **scale/pad**: Scale to 530×530 (fit height), pad 677px left/right
+
+### Benefits
+- ✅ **Complete Control**: Four strategies cover all common image transformation needs
+- ✅ **Aspect Ratio Options**: Preserve AR (scale/crop, scale/pad) or ignore it (distort)
+- ✅ **Scaling Options**: Scale (distort, scale/crop, scale/pad) or no scale (crop/pad)
+- ✅ **Professional Results**: Center-aligned operations, exact dimension output
+- ✅ **Fill Integration**: Padding uses existing fill_type/fill_color system
+
+### Related Issues
+- Completes Issue #4 (Add IMAGE output) - Full transform functionality implemented
+- Created Issue #9: Future enhancement for chainable transform operations
+- Created Issue #10: SCALE widget fine granularity bug (0.01-0.02 step limitation)
+
+### Known Limitations
+- Transform modes use bilinear interpolation only (no other upscale methods)
+- SCALE widget fine increments (0.01-0.02) difficult to achieve by dragging (Issue #10)
+- Widget value corruption bug still present (Issue #8)
+
 ## [0.3.3] - 2025-11-02 (Work in Progress - Known Bugs)
 
 ### Added

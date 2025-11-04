@@ -676,7 +676,7 @@ const ImageDimensionUtils = {
 /**
  * Custom scale multiplier widget
  * Features:
- * - 1.0x visually centered (asymmetric: 30% for 0-1.0, 70% for 1.0-10.0)
+ * - 1.0x visually centered (asymmetric: 30% for 0-1.0, 70% for 1.0-7.0)
  * - Variable steps (0.05 below 1.0, 0.1 above)
  * - Click numeric value to edit
  * - Muted appearance at 1.0 (neutral/inactive state)
@@ -687,12 +687,12 @@ class ScaleWidget {
         this.type = "custom";
         this.value = defaultValue;
         this.min = 0.0;
-        this.max = 10.0;
+        this.max = 7.0;
 
-        // Visual layout: 0-1.0 takes 30% of slider, 1.0-10.0 takes 70%
+        // Visual layout: 0-1.0 takes 30% of slider, 1.0-7.0 takes 70%
         this.centerPoint = 1.0;
         this.leftPortion = 0.3;  // 30% for 0-1.0
-        this.rightPortion = 0.7; // 70% for 1.0-10.0
+        this.rightPortion = 0.7; // 70% for 1.0-7.0
 
         // Configurable step sizes
         this.leftStep = 0.05;   // Step size below 1.0x
@@ -744,7 +744,7 @@ class ScaleWidget {
             const ratio = value / this.centerPoint;
             return ratio * this.leftPortion * sliderWidth;
         } else {
-            // Right side: 1.0 to 10.0 maps to 30% to 100% of slider
+            // Right side: 1.0 to 7.0 maps to 30% to 100% of slider
             const ratio = (value - this.centerPoint) / (this.max - this.centerPoint);
             return (this.leftPortion + ratio * this.rightPortion) * sliderWidth;
         }
@@ -760,7 +760,7 @@ class ScaleWidget {
             // Left side: 0% to 30% maps to 0 to 1.0
             return (ratio / this.leftPortion) * this.centerPoint;
         } else {
-            // Right side: 30% to 100% maps to 1.0 to 10.0
+            // Right side: 30% to 100% maps to 1.0 to 7.0
             return this.centerPoint + ((ratio - this.leftPortion) / this.rightPortion) * (this.max - this.centerPoint);
         }
     }
@@ -1633,8 +1633,23 @@ class DimensionWidget {
         this.hitAreas.toggle = { x: posX, y: y, width: toggleWidth, height: height };
         posX += toggleWidth + innerMargin * 2;
 
-        // Draw label
-        ctx.fillStyle = this.value.on ? "#ffffff" : "#888888";
+        // Draw label with special handling for megapixel default state
+        let labelColor = this.value.on ? "#ffffff" : "#888888";
+
+        // If megapixel is disabled but acting as default (no other dimensions active), make it whiter
+        if (!this.value.on && this.name === "dimension_megapixel") {
+            const widthWidget = node.widgets.find(w => w.name === "dimension_width");
+            const heightWidget = node.widgets.find(w => w.name === "dimension_height");
+            const widthActive = widthWidget?.value?.on ?? false;
+            const heightActive = heightWidget?.value?.on ?? false;
+
+            // If no other dimensions are constraining, megapixel is the default
+            if (!widthActive && !heightActive) {
+                labelColor = "#dddddd";  // Whiter to indicate it's active as default
+            }
+        }
+
+        ctx.fillStyle = labelColor;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.font = "13px sans-serif";  // Slightly smaller for compact layout
@@ -2132,6 +2147,202 @@ class ImageModeWidget {
 }
 
 /**
+ * Color Picker Button Widget
+ * Custom widget that displays a color palette in canvas space for reliable positioning
+ */
+class ColorPickerButton {
+    constructor(name = "color_picker_button", fillColorWidget) {
+        this.name = name;
+        this.type = "custom";  // Must be "custom" for addCustomWidget to route mouse events
+        this.value = null;  // Buttons don't need a value
+        this.fillColorWidget = fillColorWidget;  // Reference to fill_color widget for value storage
+
+        // State
+        this.isHoveringButton = false;
+    }
+
+    draw(ctx, node, width, y, height) {
+        ctx.save();
+
+        const x = 15;  // Standard widget left margin
+        const buttonHeight = 28;
+        const buttonWidth = width - 30;
+
+        // Get current color
+        const currentColor = this.fillColorWidget.value || "#808080";
+        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+
+        // Helper to get contrasting text color
+        const getContrastColor = (hexColor) => {
+            const hex = hexColor.replace('#', '');
+            const r = parseInt(hex.substr(0, 2), 16);
+            const g = parseInt(hex.substr(2, 2), 16);
+            const b = parseInt(hex.substr(4, 2), 16);
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            return luminance > 0.5 ? '#000000' : '#FFFFFF';
+        };
+
+        const contrastColor = getContrastColor(normalizedColor);
+
+        // === Draw Button ===
+
+        // Button background (current color)
+        ctx.fillStyle = normalizedColor;
+        ctx.fillRect(x, y, buttonWidth, buttonHeight);
+
+        // Button border
+        ctx.strokeStyle = this.isHoveringButton ? "#888" : "#666";
+        ctx.lineWidth = this.isHoveringButton ? 2 : 1;
+        ctx.strokeRect(x, y, buttonWidth, buttonHeight);
+
+        // Button text
+        ctx.fillStyle = contrastColor;
+        ctx.font = "12px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, x + buttonWidth / 2, y + buttonHeight / 2);
+
+        // Store button hit area
+        this.hitAreaButton = { x, y, width: buttonWidth, height: buttonHeight };
+
+        ctx.restore();
+    }
+
+    mouse(event, pos, node) {
+        if (event.type === "pointermove") {
+            // Check button hover
+            const wasHoveringButton = this.isHoveringButton;
+            this.isHoveringButton = this.isInBounds(pos, this.hitAreaButton);
+            if (this.isHoveringButton !== wasHoveringButton) {
+                node.setDirtyCanvas(true);
+            }
+            return false;
+        }
+
+        if (event.type === "pointerdown") {
+            // Check button click (open native color picker)
+            if (this.isInBounds(pos, this.hitAreaButton)) {
+                visibilityLogger.debug('[ColorPicker] Button clicked, opening native picker');
+
+                const currentColor = this.fillColorWidget.value || "#808080";
+                const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
+
+                // Position picker near mouse click with offset to avoid obscuring node
+                const PICKER_OFFSET_X = 100; // Offset to the right of click
+                const PICKER_OFFSET_Y = 0;   // No vertical offset
+                const PICKER_WIDTH = 50;     // Width of our input element
+                const PICKER_HEIGHT = 50;    // Height of our input element
+                const MARGIN = 20;           // Minimum margin from viewport edge
+
+                let pickerX = event.clientX + PICKER_OFFSET_X;
+                let pickerY = event.clientY + PICKER_OFFSET_Y;
+
+                // Ensure picker stays within viewport bounds
+                if (pickerX + PICKER_WIDTH + MARGIN > window.innerWidth) {
+                    // Position to left of click instead if too close to right edge
+                    pickerX = event.clientX - PICKER_OFFSET_X - PICKER_WIDTH;
+                }
+                if (pickerY + PICKER_HEIGHT + MARGIN > window.innerHeight) {
+                    pickerY = window.innerHeight - PICKER_HEIGHT - MARGIN;
+                }
+                if (pickerX < MARGIN) {
+                    pickerX = MARGIN;
+                }
+                if (pickerY < MARGIN) {
+                    pickerY = MARGIN;
+                }
+
+                visibilityLogger.debug(`[ColorPicker] Mouse position: (${event.clientX}, ${event.clientY})`);
+                visibilityLogger.debug(`[ColorPicker] Picker position with offset: (${pickerX}, ${pickerY})`);
+
+                const colorInput = document.createElement("input");
+                colorInput.type = "color";
+                colorInput.value = normalizedColor;
+                colorInput.style.position = "fixed";
+                colorInput.style.left = pickerX + "px";
+                colorInput.style.top = pickerY + "px";
+                colorInput.style.width = "50px";
+                colorInput.style.height = "50px";
+                colorInput.style.border = "2px solid #666";
+                colorInput.style.borderRadius = "4px";
+                colorInput.style.cursor = "pointer";
+                colorInput.style.zIndex = "10000";
+                document.body.appendChild(colorInput);
+
+                let pickerClosed = false;
+
+                // Handle color selection
+                const handleChange = (e) => {
+                    if (pickerClosed) return;
+                    pickerClosed = true;
+                    this.fillColorWidget.value = e.target.value;
+                    visibilityLogger.debug(`[ColorPicker] Color selected: ${e.target.value}`);
+                    node.setDirtyCanvas(true, true);
+                    if (colorInput.parentNode) {
+                        document.body.removeChild(colorInput);
+                    }
+                };
+
+                // Handle cancellation (ESC key or click outside)
+                const handleCancel = (e) => {
+                    if (pickerClosed) return;
+                    // Give the picker time to fully open before allowing cancellation
+                    setTimeout(() => {
+                        if (pickerClosed) return;
+                        if (e.type === 'keydown' && e.key === 'Escape') {
+                            pickerClosed = true;
+                            visibilityLogger.debug('[ColorPicker] Cancelled via ESC key');
+                            if (colorInput.parentNode) {
+                                document.body.removeChild(colorInput);
+                            }
+                        }
+                    }, 200);
+                };
+
+                // Handle blur with delay to allow picker to open
+                const handleBlur = () => {
+                    setTimeout(() => {
+                        if (pickerClosed) return;
+                        if (colorInput.parentNode && document.activeElement !== colorInput) {
+                            pickerClosed = true;
+                            visibilityLogger.debug('[ColorPicker] Picker closed (blur)');
+                            document.body.removeChild(colorInput);
+                        }
+                    }, 500);  // Longer delay to prevent immediate closure
+                };
+
+                colorInput.addEventListener("change", handleChange);
+                colorInput.addEventListener("keydown", handleCancel);
+                colorInput.addEventListener("blur", handleBlur);
+
+                // Open native picker with delay to ensure DOM is ready
+                setTimeout(() => {
+                    if (!pickerClosed) {
+                        colorInput.click();
+                        colorInput.focus();
+                    }
+                }, 50);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    isInBounds(pos, bounds) {
+        return pos[0] >= bounds.x &&
+               pos[0] <= bounds.x + bounds.width &&
+               pos[1] >= bounds.y &&
+               pos[1] <= bounds.y + bounds.height;
+    }
+
+    computeSize(width) {
+        return [width, 28];
+    }
+}
+
+/**
  * Copy from Image Button Widget
  * Simple button to extract dimensions from connected image and populate widgets
  */
@@ -2613,23 +2824,86 @@ app.registerExtension({
                 // Hide image output parameters until "image" output (position 5) is connected
 
                 // Store references to image output widgets
+                // NOTE: fill_color is NOT tracked here - it stays visible (but rendered as size 0)
+                // to act as a value storage and stable anchor for the color picker button
                 this.imageOutputWidgets = {
                     output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
-                    fill_type: this.widgets.find(w => w.name === "fill_type"),
-                    fill_color: this.widgets.find(w => w.name === "fill_color")
+                    fill_type: this.widgets.find(w => w.name === "fill_type")
                 };
+
+                // Debug: Log initial widget references to verify correct widgets found
+                visibilityLogger.debug('[WidgetInit] Initial widget references:', {
+                    output_image_mode: {
+                        name: this.imageOutputWidgets.output_image_mode?.name,
+                        type: this.imageOutputWidgets.output_image_mode?.type,
+                        value: this.imageOutputWidgets.output_image_mode?.value,
+                        index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
+                    },
+                    fill_type: {
+                        name: this.imageOutputWidgets.fill_type?.name,
+                        type: this.imageOutputWidgets.fill_type?.type,
+                        value: this.imageOutputWidgets.fill_type?.value,
+                        index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
+                    }
+                });
 
                 // Store original widget types, indices, and default values for restore
                 this.imageOutputWidgetIndices = {};
                 this.imageOutputWidgetValues = {
                     output_image_mode: "auto",
-                    fill_type: "black",
-                    fill_color: "#808080"
+                    fill_type: "black"
                 };
+
+                // ===== Color picker button widget =====
+                // Create a dedicated button widget for color picking, separate from text widget
+                // Find fill_color widget (not tracked in imageOutputWidgets, stays visible as anchor)
+                const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
+                if (fillColorWidget) {
+                    // Hide the fill_color text widget since button shows the color
+                    // Keep widget for value storage but don't render it (acts as stable anchor)
+                    fillColorWidget.computeSize = function() { return [0, 0]; };
+                    fillColorWidget.draw = function() { /* Hidden */ };
+
+                    // Initialize value if needed
+                    if (!fillColorWidget.value || fillColorWidget.value === undefined) {
+                        fillColorWidget.value = "#808080";
+                    }
+
+                    // Create custom color picker button widget (canvas-space rendering for reliable positioning)
+                    const colorPickerButton = new ColorPickerButton("color_picker_button", fillColorWidget);
+                    this.addCustomWidget(colorPickerButton);
+
+                    // addCustomWidget() automatically adds to end of array, so remove it first
+                    const addedIndex = this.widgets.indexOf(colorPickerButton);
+                    if (addedIndex !== -1) {
+                        this.widgets.splice(addedIndex, 1);
+                    }
+
+                    // Insert button right after fill_color widget
+                    const fillColorIndex = this.widgets.indexOf(fillColorWidget);
+                    this.widgets.splice(fillColorIndex + 1, 0, colorPickerButton);
+
+                    // Add button to image output widgets list
+                    this.imageOutputWidgets.color_picker_button = colorPickerButton;
+
+                    // Store original widget index for button
+                    this.imageOutputWidgetIndices.color_picker_button = fillColorIndex + 1;
+
+                    // Force canvas update to ensure widget becomes interactive immediately
+                    this.setDirtyCanvas(true, true);
+
+                    // Also trigger a size recalculation to ensure proper layout
+                    this.setSize(this.computeSize());
+                }
+
+                // Save origType for each widget before any hide/show cycles
+                // CRITICAL: Must run AFTER all widgets are added to imageOutputWidgets
+                // This ensures custom widgets like color_picker_button get their type preserved
                 Object.keys(this.imageOutputWidgets).forEach(key => {
                     const widget = this.imageOutputWidgets[key];
                     if (widget) {
                         widget.origType = widget.type;
+                        visibilityLogger.debug(`[OrigType] Saved ${key}: origType = "${widget.type}"`);
                         // Store original index in widgets array
                         this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
                         // Initialize widget value if not already set
@@ -2642,161 +2916,161 @@ app.registerExtension({
                     }
                 });
 
-                // ===== Color picker button widget =====
-                // Create a dedicated button widget for color picking, separate from text widget
-                const fillColorWidget = this.imageOutputWidgets.fill_color;
-                if (fillColorWidget) {
-                    // Helper function to calculate contrasting text color
-                    const getContrastColor = (hexColor) => {
-                        // Remove # if present
-                        const hex = hexColor.replace('#', '');
-                        // Convert to RGB
-                        const r = parseInt(hex.substr(0, 2), 16);
-                        const g = parseInt(hex.substr(2, 2), 16);
-                        const b = parseInt(hex.substr(4, 2), 16);
-                        // Calculate luminance
-                        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-                        // Return black for light colors, white for dark colors
-                        return luminance > 0.5 ? '#000000' : '#FFFFFF';
-                    };
-
-                    // Create button widget for color picker
-                    const colorPickerButton = this.addWidget("button", "🎨 Pick Color", null, function() {
-                        const currentColor = fillColorWidget.value || "#808080";
-                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-
-                        visibilityLogger.debug('Color picker button clicked, opening picker');
-
-                        // Calculate button position on screen for better color picker placement
-                        const nodePos = this.pos;
-                        const buttonIndex = this.widgets.indexOf(colorPickerButton);
-
-                        // Estimate button Y position (approximate)
-                        let buttonY = nodePos[1] + 80; // Node header height
-                        for (let i = 0; i < buttonIndex; i++) {
-                            buttonY += 30; // Approximate widget height
-                        }
-
-                        // Create color input positioned near the button
-                        const colorInput = document.createElement("input");
-                        colorInput.type = "color";
-                        colorInput.value = normalizedColor;
-                        colorInput.style.position = "fixed"; // Use fixed positioning
-                        colorInput.style.left = (nodePos[0] + 50) + "px"; // Position near node
-                        colorInput.style.top = buttonY + "px";
-                        colorInput.style.width = "50px";
-                        colorInput.style.height = "50px";
-                        colorInput.style.border = "none";
-                        colorInput.style.opacity = "0"; // Still invisible, but positioned
-                        colorInput.style.pointerEvents = "auto"; // Allow interaction
-                        document.body.appendChild(colorInput);
-
-                        // Handle color selection
-                        colorInput.addEventListener("change", (e) => {
-                            fillColorWidget.value = e.target.value;
-                            this.setDirtyCanvas(true, true);
-                            visibilityLogger.debug(`Color selected: ${e.target.value}`);
-                            document.body.removeChild(colorInput);
-                        });
-
-                        // Handle cancellation
-                        colorInput.addEventListener("blur", () => {
-                            setTimeout(() => {
-                                if (colorInput.parentNode) {
-                                    document.body.removeChild(colorInput);
-                                    visibilityLogger.debug('Color picker cancelled');
-                                }
-                            }, 100);
-                        });
-
-                        // Open color picker
-                        colorInput.click();
-                        colorInput.focus();
-                    });
-
-                    // Custom draw to show current color
-                    colorPickerButton.draw = function(ctx, node, width, y, height) {
-                        const currentColor = fillColorWidget.value || "#808080";
-                        const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
-                        const contrastColor = getContrastColor(normalizedColor);
-
-                        // Draw color preview background
-                        ctx.fillStyle = normalizedColor;
-                        ctx.fillRect(0, y, width, height);
-
-                        // Draw border
-                        ctx.strokeStyle = "#666";
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(0, y, width, height);
-
-                        // Draw text: emoji + hex value
-                        ctx.fillStyle = contrastColor;
-                        ctx.font = "12px monospace";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(`🎨 ${normalizedColor.toUpperCase()}`, width / 2, y + height / 2);
-                    };
-
-                    // Insert button right after fill_color widget (not at end)
-                    const fillColorIndex = this.widgets.indexOf(fillColorWidget);
-                    this.widgets.splice(fillColorIndex + 1, 0, colorPickerButton);
-
-                    // Add button to image output widgets list
-                    this.imageOutputWidgets.color_picker_button = colorPickerButton;
-
-                    // Store original widget index for button
-                    this.imageOutputWidgetIndices.color_picker_button = fillColorIndex + 1;
-                }
-
                 // Function to update widget visibility based on image output connection
                 this.updateImageOutputVisibility = function() {
+                    visibilityLogger.debug('=== updateImageOutputVisibility called ===');
+
                     // Ensure outputs array exists and has enough elements
                     if (!this.outputs || this.outputs.length < 6) {
+                        visibilityLogger.debug('Outputs not ready yet', this.outputs?.length);
                         return; // Outputs not ready yet
                     }
 
                     // Check if image output (position 5) has connections
                     const imageOutput = this.outputs[5]; // Position 5 = "image" output
+                    visibilityLogger.debug('Image output:', imageOutput);
+                    visibilityLogger.debug('Image output links:', imageOutput?.links);
 
                     // Filter out null/undefined links - array might contain nulls after disconnect
                     const hasConnection = imageOutput && imageOutput.links &&
                                         imageOutput.links.filter(link => link != null).length > 0;
 
                     visibilityLogger.debug(`Image output connected: ${hasConnection}`);
+                    visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
 
                     // Show/hide widgets based on connection status
-                    Object.keys(this.imageOutputWidgets).forEach(key => {
-                        const widget = this.imageOutputWidgets[key];
-                        if (widget) {
-                            const currentIndex = this.widgets.indexOf(widget);
-                            const isCurrentlyVisible = currentIndex !== -1;
+                    if (hasConnection) {
+                        // SOLUTION 5: Hybrid Anchor + Sequential Insertion
+                        // Use batch_size as stable anchor, insert sequentially to account for index shifts
 
-                            if (hasConnection && !isCurrentlyVisible) {
-                                // Show widget - add back to widgets array at original position
-                                const targetIndex = this.imageOutputWidgetIndices[key];
-                                // Restore value before adding (but only if it's a primitive, not object)
-                                const savedValue = this.imageOutputWidgetValues[key];
-                                if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                    widget.value = savedValue;
-                                }
-                                this.widgets.splice(targetIndex, 0, widget);
-                                widget.type = widget.origType || "combo";
-                                visibilityLogger.debug(`Widget ${key} shown, value: ${widget.value}`);
-                            } else if (!hasConnection && isCurrentlyVisible) {
-                                // Hide widget - save current value (but only if it's a primitive, not object)
-                                if (typeof widget.value !== 'object') {
-                                    this.imageOutputWidgetValues[key] = widget.value;
-                                    visibilityLogger.debug(`Widget ${key} hidden, saved value: ${widget.value}`);
-                                } else {
-                                    visibilityLogger.warn(`Widget ${key} value is object, using default: ${this.imageOutputWidgetValues[key]}`);
-                                }
-                                this.widgets.splice(currentIndex, 1);
-                            }
+                        const batchSizeWidget = this.widgets.find(w => w.name === "batch_size");
+                        const fillColorWidget = this.widgets.find(w => w.name === "fill_color");
+                        const batchSizeIndex = batchSizeWidget ? this.widgets.indexOf(batchSizeWidget) : -1;
+
+                        if (batchSizeIndex === -1) {
+                            visibilityLogger.error("Cannot find batch_size widget anchor");
+                            return;
                         }
-                    });
+
+                        visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
+                        visibilityLogger.debug('[WidgetRestore] Widget references:', {
+                            output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
+                            fill_type: this.imageOutputWidgets.fill_type?.name,
+                            color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
+                        });
+                        visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
+
+                        // Start inserting after batch_size
+                        let currentIndex = batchSizeIndex + 1;
+
+                        // 1. Insert output_image_mode first
+                        const outputWidget = this.imageOutputWidgets.output_image_mode;
+                        visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
+                            name: outputWidget?.name,
+                            type: outputWidget?.type,
+                            value: outputWidget?.value,
+                            options: outputWidget?.options?.values
+                        });
+                        if (outputWidget && this.widgets.indexOf(outputWidget) === -1) {
+                            // Restore saved value
+                            const savedValue = this.imageOutputWidgetValues.output_image_mode;
+                            if (savedValue !== undefined && typeof savedValue !== 'object') {
+                                outputWidget.value = savedValue;
+                            }
+
+                            this.widgets.splice(currentIndex, 0, outputWidget);
+                            outputWidget.type = outputWidget.origType || "combo";
+                            visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            currentIndex++; // Move insertion point forward
+                        } else if (outputWidget) {
+                            // Already visible, update currentIndex to point after it
+                            const existingIndex = this.widgets.indexOf(outputWidget);
+                            if (existingIndex >= currentIndex) {
+                                currentIndex = existingIndex + 1;
+                            }
+                            visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                        }
+
+                        // 2. Insert fill_type second
+                        const fillTypeWidget = this.imageOutputWidgets.fill_type;
+                        visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
+                            name: fillTypeWidget?.name,
+                            type: fillTypeWidget?.type,
+                            value: fillTypeWidget?.value,
+                            options: fillTypeWidget?.options?.values
+                        });
+                        if (fillTypeWidget && this.widgets.indexOf(fillTypeWidget) === -1) {
+                            // Restore saved value
+                            const savedValue = this.imageOutputWidgetValues.fill_type;
+                            if (savedValue !== undefined && typeof savedValue !== 'object') {
+                                fillTypeWidget.value = savedValue;
+                            }
+
+                            this.widgets.splice(currentIndex, 0, fillTypeWidget);
+                            fillTypeWidget.type = fillTypeWidget.origType || "combo";
+                            visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            currentIndex++; // Move insertion point forward
+                        } else if (fillTypeWidget) {
+                            // Already visible, update currentIndex to point after it
+                            const existingIndex = this.widgets.indexOf(fillTypeWidget);
+                            if (existingIndex >= currentIndex) {
+                                currentIndex = existingIndex + 1;
+                            }
+                            visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                        }
+
+                        // 3. fill_color should already be in array (invisible)
+                        //    Find it and position button after it
+                        const fillColorIndex = fillColorWidget ? this.widgets.indexOf(fillColorWidget) : -1;
+                        if (fillColorIndex !== -1) {
+                            currentIndex = fillColorIndex + 1;
+                            visibilityLogger.debug(`fill_color found at index ${fillColorIndex}, button will go at ${currentIndex}`);
+
+                            // 4. Insert color picker button
+                            const buttonWidget = this.imageOutputWidgets.color_picker_button;
+                            if (buttonWidget && this.widgets.indexOf(buttonWidget) === -1) {
+                                // Button widget doesn't have a primitive value to restore
+                                this.widgets.splice(currentIndex, 0, buttonWidget);
+                                const restoredType = buttonWidget.origType || "button";
+                                buttonWidget.type = restoredType;
+                                visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}, type: "${restoredType}" (origType: "${buttonWidget.origType}")`);
+                            } else if (buttonWidget) {
+                                visibilityLogger.debug(`color_picker_button already visible at ${this.widgets.indexOf(buttonWidget)}`);
+                            }
+                        } else {
+                            visibilityLogger.error("Cannot find fill_color for button placement");
+                        }
+                    } else {
+                        // When hiding, remove in reverse order to avoid index shifts
+                        visibilityLogger.debug('HIDING WIDGETS - hasConnection is false');
+                        const widgetsToHide = Object.keys(this.imageOutputWidgets)
+                            .map(key => ({
+                                key,
+                                widget: this.imageOutputWidgets[key],
+                                currentIndex: this.widgets.indexOf(this.imageOutputWidgets[key])
+                            }))
+                            .filter(item => item.widget && item.currentIndex !== -1)
+                            .sort((a, b) => b.currentIndex - a.currentIndex); // Reverse order
+
+                        visibilityLogger.debug('Widgets to hide:', widgetsToHide.map(w => `${w.key} at index ${w.currentIndex}`));
+
+                        widgetsToHide.forEach(item => {
+                            // Hide widget - save current value (but only if it's a primitive, not object)
+                            if (typeof item.widget.value !== 'object') {
+                                this.imageOutputWidgetValues[item.key] = item.widget.value;
+                                visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${item.widget.value}`);
+                            } else {
+                                visibilityLogger.debug(`Widget ${item.key} value is object, using default: ${this.imageOutputWidgetValues[item.key]}`);
+                            }
+                            this.widgets.splice(item.currentIndex, 1);
+                        });
+                    }
 
                     // Resize node to accommodate shown/hidden widgets
-                    this.setSize(this.computeSize());
+                    // Preserve width, only change height
+                    const currentSize = this.size || this.computeSize();
+                    const newSize = this.computeSize();
+                    this.setSize([currentSize[0], newSize[1]]);
                 };
 
                 // Initially hide widgets - delay until outputs are ready
