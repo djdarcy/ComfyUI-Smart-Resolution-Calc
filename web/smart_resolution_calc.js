@@ -2212,19 +2212,40 @@ class ColorPickerButton {
                 const currentColor = this.fillColorWidget.value || "#808080";
                 const normalizedColor = currentColor.startsWith('#') ? currentColor : '#' + currentColor;
 
-                // Create native color input positioned at viewport center for reliability
-                const centerX = window.innerWidth / 2;
-                const centerY = window.innerHeight / 2;
+                // Position picker near mouse click with offset to avoid obscuring node
+                const PICKER_OFFSET_X = 100; // Offset to the right of click
+                const PICKER_OFFSET_Y = 0;   // No vertical offset
+                const PICKER_WIDTH = 50;     // Width of our input element
+                const PICKER_HEIGHT = 50;    // Height of our input element
+                const MARGIN = 20;           // Minimum margin from viewport edge
 
-                visibilityLogger.debug(`[ColorPicker] Viewport center: (${centerX}, ${centerY})`);
+                let pickerX = event.clientX + PICKER_OFFSET_X;
+                let pickerY = event.clientY + PICKER_OFFSET_Y;
+
+                // Ensure picker stays within viewport bounds
+                if (pickerX + PICKER_WIDTH + MARGIN > window.innerWidth) {
+                    // Position to left of click instead if too close to right edge
+                    pickerX = event.clientX - PICKER_OFFSET_X - PICKER_WIDTH;
+                }
+                if (pickerY + PICKER_HEIGHT + MARGIN > window.innerHeight) {
+                    pickerY = window.innerHeight - PICKER_HEIGHT - MARGIN;
+                }
+                if (pickerX < MARGIN) {
+                    pickerX = MARGIN;
+                }
+                if (pickerY < MARGIN) {
+                    pickerY = MARGIN;
+                }
+
+                visibilityLogger.debug(`[ColorPicker] Mouse position: (${event.clientX}, ${event.clientY})`);
+                visibilityLogger.debug(`[ColorPicker] Picker position with offset: (${pickerX}, ${pickerY})`);
 
                 const colorInput = document.createElement("input");
                 colorInput.type = "color";
                 colorInput.value = normalizedColor;
                 colorInput.style.position = "fixed";
-                colorInput.style.left = centerX + "px";
-                colorInput.style.top = centerY + "px";
-                colorInput.style.transform = "translate(-50%, -50%)";
+                colorInput.style.left = pickerX + "px";
+                colorInput.style.top = pickerY + "px";
                 colorInput.style.width = "50px";
                 colorInput.style.height = "50px";
                 colorInput.style.border = "2px solid #666";
@@ -2817,21 +2838,6 @@ app.registerExtension({
                     output_image_mode: "auto",
                     fill_type: "black"
                 };
-                Object.keys(this.imageOutputWidgets).forEach(key => {
-                    const widget = this.imageOutputWidgets[key];
-                    if (widget) {
-                        widget.origType = widget.type;
-                        // Store original index in widgets array
-                        this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
-                        // Initialize widget value if not already set
-                        if (widget.value === undefined || typeof widget.value === 'object') {
-                            widget.value = this.imageOutputWidgetValues[key];
-                        } else {
-                            // Use actual widget value if already initialized
-                            this.imageOutputWidgetValues[key] = widget.value;
-                        }
-                    }
-                });
 
                 // ===== Color picker button widget =====
                 // Create a dedicated button widget for color picking, separate from text widget
@@ -2867,7 +2873,33 @@ app.registerExtension({
 
                     // Store original widget index for button
                     this.imageOutputWidgetIndices.color_picker_button = fillColorIndex + 1;
+
+                    // Force canvas update to ensure widget becomes interactive immediately
+                    this.setDirtyCanvas(true, true);
+
+                    // Also trigger a size recalculation to ensure proper layout
+                    this.setSize(this.computeSize());
                 }
+
+                // Save origType for each widget before any hide/show cycles
+                // CRITICAL: Must run AFTER all widgets are added to imageOutputWidgets
+                // This ensures custom widgets like color_picker_button get their type preserved
+                Object.keys(this.imageOutputWidgets).forEach(key => {
+                    const widget = this.imageOutputWidgets[key];
+                    if (widget) {
+                        widget.origType = widget.type;
+                        visibilityLogger.debug(`[OrigType] Saved ${key}: origType = "${widget.type}"`);
+                        // Store original index in widgets array
+                        this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
+                        // Initialize widget value if not already set
+                        if (widget.value === undefined || typeof widget.value === 'object') {
+                            widget.value = this.imageOutputWidgetValues[key];
+                        } else {
+                            // Use actual widget value if already initialized
+                            this.imageOutputWidgetValues[key] = widget.value;
+                        }
+                    }
+                });
 
                 // Function to update widget visibility based on image output connection
                 this.updateImageOutputVisibility = function() {
@@ -2984,8 +3016,9 @@ app.registerExtension({
                             if (buttonWidget && this.widgets.indexOf(buttonWidget) === -1) {
                                 // Button widget doesn't have a primitive value to restore
                                 this.widgets.splice(currentIndex, 0, buttonWidget);
-                                buttonWidget.type = buttonWidget.origType || "button";
-                                visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}`);
+                                const restoredType = buttonWidget.origType || "button";
+                                buttonWidget.type = restoredType;
+                                visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}, type: "${restoredType}" (origType: "${buttonWidget.origType}")`);
                             } else if (buttonWidget) {
                                 visibilityLogger.debug(`color_picker_button already visible at ${this.widgets.indexOf(buttonWidget)}`);
                             }
