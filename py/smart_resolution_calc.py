@@ -216,6 +216,63 @@ class SmartResolutionCalc:
         h_ratio = height // divisor
         return f"{w_ratio}:{h_ratio}"
 
+    def calculate_mode_label_for_info(self, use_width, use_height, use_mp, use_image, exact_dims, ar_source_label, calculated_ar):
+        """
+        Calculate mode label for info output based on active widget states.
+
+        Mirrors JavaScript's DimensionSourceManager priority system to ensure consistency
+        between MODE widget display and info output.
+
+        Args:
+            ar_source_label: String describing AR source, e.g., "Image AR (1:1)", "Aspect Ratio (16:9)"
+            calculated_ar: The actual AR calculated from dimensions (e.g., "16:9")
+
+        Priority order (matching JavaScript):
+        1. Image Exact Dims
+        2. Width + Height (show calculated AR)
+        3. Width + Megapixels (show calculated AR)
+        4. Height + Megapixels (show calculated AR)
+        5. Width + Aspect Ratio (with source context)
+        6. Height + Aspect Ratio (with source context)
+        7. Megapixels + Aspect Ratio (with source context)
+        8. Default (1.0 MP) / Image AR Only mode
+        """
+        # Priority 1: Image Exact Dims
+        if use_image and exact_dims:
+            return f"Image Exact Dims (AR: {calculated_ar})"
+
+        # Priority 2: Width + Height (both specified - show calculated AR)
+        if use_width and use_height:
+            return f"Width + Height (AR: {calculated_ar})"
+
+        # Priority 3: Width + Megapixels (show calculated AR)
+        if use_width and use_mp:
+            return f"Width + Megapixels (AR: {calculated_ar})"
+
+        # Priority 4: Height + Megapixels (show calculated AR)
+        if use_height and use_mp:
+            return f"Height + Megapixels (AR: {calculated_ar})"
+
+        # Priority 5: Width + Aspect Ratio (show AR source with ratio)
+        if use_width:
+            return f"Width + {ar_source_label}"
+
+        # Priority 6: Height + Aspect Ratio (show AR source with ratio)
+        if use_height:
+            return f"Height + {ar_source_label}"
+
+        # Priority 7: Megapixels + Aspect Ratio (show AR source with ratio)
+        if use_mp:
+            return f"Megapixels + {ar_source_label}"
+
+        # Priority 8: Default or Image AR Only
+        if use_image and not exact_dims:
+            # AR Only mode with no dimension widgets - using defaults with image AR
+            return f"Default (1.0 MP) + {ar_source_label}"
+
+        # Pure default mode (no inputs active - show calculated AR)
+        return f"Default (1.0 MP) (AR: {calculated_ar})"
+
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
                             image=None, output_image_mode="none", fill_type="black",
@@ -493,10 +550,37 @@ class SmartResolutionCalc:
 
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
-        info = f"Mode: {mode} | {info_detail} | Div: {div_info}"
 
-        # Prepend image source info if applicable
-        if mode_info:
+        # Calculate actual AR from final base dimensions (before scale/rounding)
+        # This shows the true aspect ratio regardless of calculation method
+        calculated_ar = self.format_aspect_ratio(w, h)
+
+        # Determine AR source label for mode display (always include actual ratio)
+        if use_image and not exact_dims:
+            # AR Only mode - show image AR with actual ratio
+            ar_source_label = f"Image AR ({ratio_display})"
+        else:
+            # Generic aspect ratio (dropdown or custom) - always show the ratio
+            ar_source_label = f"Aspect Ratio ({ratio_display})"
+
+        # Calculate mode label using same priority system as JavaScript
+        mode_display = self.calculate_mode_label_for_info(
+            use_width=use_width,
+            use_height=use_height,
+            use_mp=use_mp,
+            use_image=use_image,
+            exact_dims=exact_dims,
+            ar_source_label=ar_source_label,
+            calculated_ar=calculated_ar
+        )
+        logger.debug(f"Calculated mode for info: '{mode_display}' (widgets: W={use_width}, H={use_height}, MP={use_mp}, Image={use_image}/{exact_dims}, AR source: {ar_source_label}, calculated AR: {calculated_ar})")
+
+        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info}"
+
+        # Don't prepend mode_info since AR source is now integrated into mode display
+        # (mode_info was just "From Image (AR: X)" which is now part of the mode label)
+        if mode_info and exact_dims:
+            # Only prepend for Exact Dims mode since it has different info
             info = f"{mode_info} | {info}"
             # Add override warning if exact dims mode overrides manual settings
             if override_warning:
