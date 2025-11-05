@@ -12,6 +12,7 @@
 
 // Import modular components
 import { DimensionSourceManager } from './managers/dimension_source_manager.js';
+import { logger, visibilityLogger, dimensionLogger } from './utils/debug_logger.js';
 
 // Dynamic import helper for standalone vs DazzleNodes compatibility (Option A: Inline)
 async function importComfyCore() {
@@ -37,74 +38,10 @@ async function importComfyCore() {
     const { app, TOOLTIP_CONTENT } = await importComfyCore();
 
 /**
- * Debug Logger - Multi-level logging
- *
- * Levels (from most to least verbose):
- * - VERBOSE: Detailed internal state (mouse events, hit areas, every step)
- * - DEBUG: Standard debugging (user actions, state changes)
- * - INFO: Important events (always shown when debug enabled)
- *
- * Enable debug: localStorage.setItem('DEBUG_SMART_RES_CALC', 'true')
- * Enable verbose: localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true')
- * Disable: localStorage.removeItem('DEBUG_SMART_RES_CALC')
+ * Debug logging system
+ * DebugLogger class and instances now imported from ./utils/debug_logger.js
+ * See that file for usage documentation and configuration.
  */
-class DebugLogger {
-    constructor(name) {
-        this.name = name;
-        // Check localStorage OR URL parameter for debug/verbose mode
-        this.debugEnabled = localStorage.getItem('DEBUG_SMART_RES_CALC') === 'true' ||
-                           window.location.search.includes('debug=smart-res');
-        this.verboseEnabled = localStorage.getItem('VERBOSE_SMART_RES_CALC') === 'true' ||
-                             window.location.search.includes('verbose=smart-res');
-
-        if (this.verboseEnabled) {
-            console.log(`[${this.name}] Verbose mode enabled (includes all debug messages)`);
-        } else if (this.debugEnabled) {
-            console.log(`[${this.name}] Debug mode enabled`);
-        }
-    }
-
-    // VERBOSE: Detailed internal state (mouse coords, hit areas, serialization)
-    verbose(...args) {
-        if (this.verboseEnabled) {
-            console.log(`[${this.name}] VERBOSE:`, ...args);
-        }
-    }
-
-    // DEBUG: Standard debugging (user actions, state changes)
-    debug(...args) {
-        if (this.debugEnabled || this.verboseEnabled) {
-            console.log(`[${this.name}]`, ...args);
-        }
-    }
-
-    // INFO: Important events (always shown when debug enabled)
-    info(...args) {
-        if (this.debugEnabled || this.verboseEnabled) {
-            console.log(`[${this.name}]`, ...args);
-        }
-    }
-
-    // ERROR: Always shown
-    error(...args) {
-        console.error(`[${this.name}] ERROR:`, ...args);
-    }
-
-    group(label) {
-        if (this.debugEnabled || this.verboseEnabled) console.group(`[${this.name}] ${label}`);
-    }
-
-    groupEnd() {
-        if (this.debugEnabled || this.verboseEnabled) console.groupEnd();
-    }
-}
-
-const logger = new DebugLogger('SmartResCalc');
-const visibilityLogger = new DebugLogger('SmartResCalc:Visibility');
-
-// Expose loggers globally for debugging
-window.smartResCalcLogger = logger;
-window.smartResCalcVisibilityLogger = visibilityLogger;
 
 /**
  * Toggle Behavior Modes
@@ -784,8 +721,9 @@ class ScaleWidget {
         }
 
         // Pass runtime context including image dimensions cache
-        console.log('[DEBUG-CACHE] imageDimensionsCache:', this.imageDimensionsCache);
-        console.log('[DEBUG-CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
+        // TEMPORARILY DISABLED: Debug logging (testing canvas corruption)
+        dimensionLogger.debug('[CACHE] imageDimensionsCache:', this.imageDimensionsCache);
+        dimensionLogger.debug('[CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
         const dimSource = node.dimensionSourceManager.getActiveDimensionSource(false, {
             imageDimensionsCache: this.imageDimensionsCache
         });
@@ -834,15 +772,15 @@ class ScaleWidget {
      * Called when image connected/disconnected or USE_IMAGE toggled
      */
     async refreshImageDimensions(node) {
-        console.log('[DEBUG-REFRESH] refreshImageDimensions called');
+        dimensionLogger.debug('[REFRESH] refreshImageDimensions called');
 
         // Check if USE_IMAGE is enabled
         const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
-        console.log('[DEBUG-REFRESH] imageModeWidget:', imageModeWidget);
-        console.log('[DEBUG-REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
+        dimensionLogger.verbose('[REFRESH] imageModeWidget:', imageModeWidget);
+        dimensionLogger.verbose('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
-            console.log('[DEBUG-REFRESH] USE_IMAGE disabled, clearing cache');
+            // dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
             logger.verbose('USE_IMAGE disabled, clearing dimension cache');
             return;
         }
@@ -850,11 +788,11 @@ class ScaleWidget {
         // Get connected image node
         const imageInput = node.inputs?.find(inp => inp.name === "image");
         const link = imageInput?.link;
-        console.log('[DEBUG-REFRESH] imageInput:', imageInput);
-        console.log('[DEBUG-REFRESH] link:', link);
+        dimensionLogger.verbose('[REFRESH] imageInput:', imageInput);
+        dimensionLogger.verbose('[REFRESH] link:', link);
         if (!link) {
             this.imageDimensionsCache = null;
-            console.log('[DEBUG-REFRESH] No image connected, clearing cache');
+            // dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
             logger.verbose('No image connected, clearing dimension cache');
             return;
         }
@@ -862,41 +800,41 @@ class ScaleWidget {
         // Get source node from link
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
-        console.log('[DEBUG-REFRESH] sourceNode:', sourceNode);
+        dimensionLogger.verbose('[REFRESH] sourceNode:', sourceNode);
         if (!sourceNode) {
             this.imageDimensionsCache = null;
-            console.log('[DEBUG-REFRESH] Source node not found, clearing cache');
+            // dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
             logger.verbose('Source node not found, clearing dimension cache');
             return;
         }
 
         // Check cache validity (same image path)
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
-        console.log('[DEBUG-REFRESH] filePath:', filePath);
-        console.log('[DEBUG-REFRESH] Current cache:', this.imageDimensionsCache);
+        dimensionLogger.debug('[REFRESH] filePath:', filePath);
+        dimensionLogger.verbose('[REFRESH] Current cache:', this.imageDimensionsCache);
         if (this.imageDimensionsCache?.path === filePath && filePath) {
-            console.log('[DEBUG-REFRESH] Using cached dimensions for:', filePath);
+            // dimensionLogger.debug('[REFRESH] Using cached dimensions for:', filePath);
             logger.verbose(`Using cached dimensions for ${filePath}`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
-            console.log('[DEBUG-REFRESH] Already fetching, skipping');
+            // dimensionLogger.debug('[REFRESH] Already fetching, skipping');
             logger.verbose('Already fetching dimensions, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
-        console.log('[DEBUG-REFRESH] Starting hybrid fetch strategy');
+        dimensionLogger.debug('[REFRESH] Starting hybrid fetch strategy');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
             if (filePath) {
-                console.log('[DEBUG-REFRESH] Tier 1: Attempting server endpoint for:', filePath);
+                // dimensionLogger.debug('[REFRESH] Tier 1: Attempting server endpoint for:', filePath);
                 logger.debug(`[ScaleWidget] Attempting server endpoint for: ${filePath}`);
                 const dims = await ImageDimensionUtils.fetchDimensionsFromServer(filePath);
-                console.log('[DEBUG-REFRESH] Server response:', dims);
+                // dimensionLogger.verbose('[REFRESH] Server response:', dims);
                 logger.debug(`[ScaleWidget] Server response:`, dims);
                 if (dims?.success) {
                     this.imageDimensionsCache = {
@@ -905,7 +843,7 @@ class ScaleWidget {
                         timestamp: Date.now(),
                         path: filePath
                     };
-                    console.log('[DEBUG-REFRESH] ✓ Cached from server:', dims.width, 'x', dims.height);
+                    // dimensionLogger.debug('[REFRESH] ✓ Cached from server:', dims.width, 'x', dims.height);
                     logger.info(`✓ Cached image dimensions from server: ${dims.width}×${dims.height}`);
 
                     // Invalidate dimension source cache when image dimensions change
@@ -914,18 +852,18 @@ class ScaleWidget {
                     node.setDirtyCanvas(true, true);
                     return;
                 }
-                console.log('[DEBUG-REFRESH] Server endpoint failed or returned no data');
+                // dimensionLogger.debug('[REFRESH] Server endpoint failed or returned no data');
                 logger.debug('[ScaleWidget] Server endpoint returned no data or failed');
             } else {
-                console.log('[DEBUG-REFRESH] No file path (not a LoadImage node?)');
+                // dimensionLogger.debug('[REFRESH] No file path (not a LoadImage node?)');
                 logger.debug('[ScaleWidget] No file path found (not a LoadImage node?)');
             }
 
             // Tier 2: Info parsing (cached execution output)
-            console.log('[DEBUG-REFRESH] Tier 2: Attempting info parsing');
+            // dimensionLogger.debug('[REFRESH] Tier 2: Attempting info parsing');
             logger.verbose('Attempting info parsing for cached dimensions');
             const cachedDims = ImageDimensionUtils.parseDimensionsFromInfo(node);
-            console.log('[DEBUG-REFRESH] Info parsing result:', cachedDims);
+            // dimensionLogger.verbose('[REFRESH] Info parsing result:', cachedDims);
             if (cachedDims) {
                 this.imageDimensionsCache = {
                     width: cachedDims.width,
@@ -933,7 +871,7 @@ class ScaleWidget {
                     timestamp: Date.now(),
                     path: filePath
                 };
-                console.log('[DEBUG-REFRESH] ✓ Cached from info:', cachedDims.width, 'x', cachedDims.height);
+                // dimensionLogger.debug('[REFRESH] ✓ Cached from info:', cachedDims.width, 'x', cachedDims.height);
                 logger.debug(`✓ Cached image dimensions from info: ${cachedDims.width}×${cachedDims.height}`);
 
                 // Invalidate dimension source cache when image dimensions change
@@ -942,17 +880,17 @@ class ScaleWidget {
                 node.setDirtyCanvas(true, true);
                 return;
             }
-            console.log('[DEBUG-REFRESH] Info parsing found no dimensions');
+            // dimensionLogger.debug('[REFRESH] Info parsing found no dimensions');
             logger.verbose('Info parsing found no dimensions');
 
             // Tier 3: Clear cache (will fallback to widget values in calculatePreview)
-            console.log('[DEBUG-REFRESH] Tier 3: No dimensions available, clearing cache');
+            // dimensionLogger.debug('[REFRESH] Tier 3: No dimensions available, clearing cache');
             logger.verbose('No dimensions available from any source, clearing cache');
             this.imageDimensionsCache = null;
 
         } finally {
             this.fetchingDimensions = false;
-            console.log('[DEBUG-REFRESH] Fetch complete, fetchingDimensions = false');
+            // dimensionLogger.verbose('[REFRESH] Fetch complete, fetchingDimensions = false');
         }
     }
 
@@ -1116,6 +1054,13 @@ class ScaleWidget {
             return 'WIDTH & HEIGHT';
         }
 
+        // Check for AR Only mode (Priority 4)
+        if (mode === 'ar_only') {
+            // Extract dimension source from description
+            const dimensionSource = description.split(' & ')[0]; // "HEIGHT", "WIDTH", "MEGAPIXEL", or "defaults"
+            return `${dimensionSource} & USE IMAGE DIMS AR Only`;
+        }
+
         // Extract active sources from description
         const sources = [];
 
@@ -1133,15 +1078,10 @@ class ScaleWidget {
         // Check for AR sources
         if (description.includes('custom_ratio') || description.includes('Custom')) {
             sources.push('custom_ratio');
-        } else if (description.includes('image AR') || description.includes('Image AR')) {
+        } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
             sources.push('image_ar');
         } else if (description.includes('dropdown') || description.includes('Dropdown')) {
             sources.push('dropdown_ar');
-        }
-
-        // Check for AR Only mode
-        if (description.includes('AR Only') && description.includes('image')) {
-            sources.push('image_ar_only');
         }
 
         // Check for defaults
@@ -1193,44 +1133,55 @@ class ScaleWidget {
         lines.push(`Scaled: ${preview.scaledW} × ${preview.scaledH}`);
         lines.push(`After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`);
 
-        // Add conflict warnings if any
+        // Measure text width BEFORE adding conflicts to determine max tooltip width
+        ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
+        let maxTooltipWidth = 0;
+        lines.forEach(line => {
+            const textWidth = ctx.measureText(line).width;
+            if (textWidth > maxTooltipWidth) {
+                maxTooltipWidth = textWidth;
+            }
+        });
+
+        // Add conflict warnings with proper word wrapping
         if (preview.conflicts && preview.conflicts.length > 0) {
             lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━`);
             lines.push(`⚠️  Conflicts detected:`);
+
             preview.conflicts.forEach(conflict => {
-                // Wrap long conflict messages (split at ~60 chars)
                 const msg = conflict.message || conflict;
-                if (msg.length > 60) {
-                    // Split on word boundaries
-                    const words = msg.split(' ');
-                    let currentLine = '';
-                    words.forEach(word => {
-                        if ((currentLine + word).length > 58) {
-                            if (currentLine) lines.push(`  ${currentLine.trim()}`);
-                            currentLine = word + ' ';
-                        } else {
-                            currentLine += word + ' ';
-                        }
-                    });
-                    if (currentLine) lines.push(`  ${currentLine.trim()}`);
-                } else {
-                    lines.push(`  ${msg}`);
+                const indent = '    '; // 4 spaces for indentation
+                const maxLineWidth = 500; // Maximum width in pixels for wrapped lines
+
+                // Measure and wrap based on actual pixel width, not character count
+                const words = msg.split(' ');
+                let currentLine = indent;
+
+                words.forEach((word, index) => {
+                    const testLine = index === 0 ? indent + word : currentLine + ' ' + word;
+                    const testWidth = ctx.measureText(testLine).width;
+
+                    if (testWidth > maxLineWidth && currentLine !== indent) {
+                        // Line too long, push current line and start new one
+                        lines.push(currentLine);
+                        maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
+                        currentLine = indent + word;
+                    } else {
+                        // Add word to current line
+                        currentLine = testLine;
+                    }
+                });
+
+                // Push final line
+                if (currentLine.trim()) {
+                    lines.push(currentLine);
+                    maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
                 }
             });
         }
 
-        // Measure text width to ensure tooltip background fits all content
-        ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
-        let maxTextWidth = 0;
-        lines.forEach(line => {
-            const textWidth = ctx.measureText(line).width;
-            if (textWidth > maxTextWidth) {
-                maxTextWidth = textWidth;
-            }
-        });
-
-        // Calculate tooltip dimensions with dynamic width
-        const tooltipWidth = Math.min(maxTextWidth + padding * 2, width - margin * 2);
+        // Calculate tooltip dimensions with dynamic width (allow tooltip to extend beyond node)
+        const tooltipWidth = maxTooltipWidth + padding * 2;
         const tooltipHeight = lines.length * lineHeight + padding * 2;
 
         // Draw tooltip background
@@ -1635,6 +1586,82 @@ class ScaleWidget {
     serializeValue(node, index) {
         logger.debug(`serializeValue called: ${this.name} (index ${index}) = ${this.value}, steps: ${this.leftStep}/${this.rightStep}`);
         return this.value;  // Return float for Python, config stored elsewhere
+    }
+}
+
+/**
+ * Mode Status Widget - Read-only display showing current dimension calculation mode
+ * Positioned above aspect_ratio to provide at-a-glance mode visibility
+ */
+class ModeStatusWidget {
+    constructor(name = "mode_status") {
+        this.name = name;
+        this.type = "custom";
+        this.value = "Calculating...";  // Default text
+
+        // Styling
+        this.bgColor = "#2a2a2a";
+        this.textColor = "#aaaaaa";
+        this.borderColor = "#3a3a3a";
+    }
+
+    draw(ctx, node, width, y, height) {
+        ctx.save();
+
+        const x = 15;  // Standard widget left margin
+        const displayHeight = 24;
+        const radius = 4;
+        const rectWidth = width - 30;
+
+        // Background with rounded corners (manual implementation for compatibility)
+        ctx.fillStyle = this.bgColor;
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + rectWidth - radius, y);
+        ctx.arcTo(x + rectWidth, y, x + rectWidth, y + radius, radius);
+        ctx.lineTo(x + rectWidth, y + displayHeight - radius);
+        ctx.arcTo(x + rectWidth, y + displayHeight, x + rectWidth - radius, y + displayHeight, radius);
+        ctx.lineTo(x + radius, y + displayHeight);
+        ctx.arcTo(x, y + displayHeight, x, y + displayHeight - radius, radius);
+        ctx.lineTo(x, y + radius);
+        ctx.arcTo(x, y, x + radius, y, radius);
+        ctx.closePath();
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = this.borderColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = this.textColor;
+        ctx.font = "12px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+
+        // Truncate text if too long
+        const maxWidth = rectWidth - 16;
+        let displayText = this.value || "Unknown";
+        const textWidth = ctx.measureText(displayText).width;
+        if (textWidth > maxWidth) {
+            while (ctx.measureText(displayText + "...").width > maxWidth && displayText.length > 0) {
+                displayText = displayText.slice(0, -1);
+            }
+            displayText += "...";
+        }
+
+        ctx.fillText(displayText, x + 8, y + displayHeight / 2);
+
+        ctx.restore();
+    }
+
+    computeSize(width) {
+        return [width, 28];  // Height matches other custom widgets
+    }
+
+    // Update the mode display text
+    updateMode(modeDescription) {
+        this.value = modeDescription || "Unknown";
     }
 }
 
@@ -2163,7 +2190,7 @@ class ImageModeWidget {
                 // Symmetric toggle behavior would skip this check (always allow)
 
                 this.value.on = newState;
-                console.log('[DEBUG-TOGGLE] Image mode toggled:', oldState, '→', newState);
+                // dimensionLogger.debug('[TOGGLE] Image mode toggled:', oldState, '→', newState);
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
                 // Invalidate dimension source cache when USE_IMAGE toggle changes
@@ -2172,25 +2199,25 @@ class ImageModeWidget {
                 // Trigger scale dimension refresh when USE_IMAGE is toggled
                 // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
                 const scaleWidget = node.widgets?.find(w => w instanceof ScaleWidget);
-                console.log('[DEBUG-TOGGLE] scaleWidget found:', scaleWidget);
-                console.log('[DEBUG-TOGGLE] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
-                console.log('[DEBUG-TOGGLE] typeof refreshImageDimensions:', typeof scaleWidget?.refreshImageDimensions);
+                // dimensionLogger.verbose('[TOGGLE] scaleWidget found:', scaleWidget);
+                // dimensionLogger.verbose('[TOGGLE] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
+                // dimensionLogger.verbose('[TOGGLE] typeof refreshImageDimensions:', typeof scaleWidget?.refreshImageDimensions);
 
                 if (scaleWidget?.refreshImageDimensions) {
-                    console.log('[DEBUG-TOGGLE] Inside refresh condition, newState:', newState);
+                    // dimensionLogger.debug('[TOGGLE] Inside refresh condition, newState:', newState);
                     if (newState) {
                         // Toggled ON - fetch image dimensions
-                        console.log('[DEBUG-TOGGLE] Calling refreshImageDimensions for ON state');
+                        // dimensionLogger.debug('[TOGGLE] Calling refreshImageDimensions for ON state');
                         logger.info('[Toggle] USE_IMAGE enabled, triggering scale dimension refresh');
                         scaleWidget.refreshImageDimensions(node);
                     } else {
                         // Toggled OFF - clear cache
-                        console.log('[DEBUG-TOGGLE] Clearing cache for OFF state');
+                        // dimensionLogger.debug('[TOGGLE] Clearing cache for OFF state');
                         scaleWidget.imageDimensionsCache = null;
                         logger.info('[Toggle] USE_IMAGE disabled, cleared scale dimension cache');
                     }
                 } else {
-                    console.log('[DEBUG-TOGGLE] No scale widget or refresh method found');
+                    // dimensionLogger.debug('[TOGGLE] No scale widget or refresh method found');
                     logger.debug('[Toggle] No scale widget or refresh method found');
                 }
 
@@ -2842,6 +2869,9 @@ app.registerExtension({
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
 
+                // TESTING: MODE status widget commented out to isolate corruption
+                // const modeStatusWidget = new ModeStatusWidget("mode_status");
+
                 // Add widgets to node (image mode first, then copy button, then dimension controls, then scale)
                 this.addCustomWidget(imageModeWidget);
                 this.addCustomWidget(copyButton);
@@ -2849,6 +2879,7 @@ app.registerExtension({
                 this.addCustomWidget(widthWidget);
                 this.addCustomWidget(heightWidget);
                 this.addCustomWidget(scaleWidget);
+                // TESTING: this.addCustomWidget(modeStatusWidget);
 
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
@@ -2856,6 +2887,20 @@ app.registerExtension({
                 // Initialize DimensionSourceManager for centralized dimension calculation
                 this.dimensionSourceManager = new DimensionSourceManager(this);
                 logger.debug('Initialized DimensionSourceManager');
+
+                // TESTING: Position mode_status widget above aspect_ratio (commented out)
+                // const aspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
+                // const modeStatusIndex = this.widgets.findIndex(w => w.name === "mode_status");
+                // if (aspectRatioIndex !== -1 && modeStatusIndex !== -1) {
+                //     // Remove mode_status from its current position
+                //     const [modeWidget] = this.widgets.splice(modeStatusIndex, 1);
+                //     // Insert it right before aspect_ratio
+                //     const newAspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
+                //     this.widgets.splice(newAspectRatioIndex, 0, modeWidget);
+                //     logger.debug('Positioned mode_status widget above aspect_ratio');
+                // } else {
+                //     logger.debug('Could not position mode_status (aspect_ratio or mode_status not found)');
+                // }
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
@@ -3406,19 +3451,19 @@ app.registerExtension({
                     const input = this.inputs[index];
 
                     if (input.name === "image") {
-                        console.log('[DEBUG-CONNECTION] Image connection change event, connected:', connected);
+                        // dimensionLogger.debug('[CONNECTION] Image connection change event, connected:', connected);
 
                         // Find the ImageModeWidget and ScaleWidget
                         const imageModeWidget = this.widgets?.find(w => w.name === "image_mode");
                         // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
                         const scaleWidget = this.widgets?.find(w => w instanceof ScaleWidget);
 
-                        console.log('[DEBUG-CONNECTION] imageModeWidget found:', imageModeWidget);
-                        console.log('[DEBUG-CONNECTION] scaleWidget found:', scaleWidget);
-                        console.log('[DEBUG-CONNECTION] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
+                        // dimensionLogger.verbose('[CONNECTION] imageModeWidget found:', imageModeWidget);
+                        // dimensionLogger.verbose('[CONNECTION] scaleWidget found:', scaleWidget);
+                        // dimensionLogger.verbose('[CONNECTION] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
 
                         if (connected) {
-                            console.log('[DEBUG-CONNECTION] Processing image CONNECTED event');
+                            // dimensionLogger.debug('[CONNECTION] Processing image CONNECTED event');
 
                             // Mark image as connected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
@@ -3427,17 +3472,17 @@ app.registerExtension({
 
                             // Trigger dimension cache refresh for scale tooltip
                             if (scaleWidget && scaleWidget.refreshImageDimensions) {
-                                console.log('[DEBUG-CONNECTION] Calling refreshImageDimensions for connected image');
+                                // dimensionLogger.debug('[CONNECTION] Calling refreshImageDimensions for connected image');
                                 logger.info('[Connection] Image connected, triggering scale dimension refresh');
                                 scaleWidget.refreshImageDimensions(this);
                             } else {
-                                console.log('[DEBUG-CONNECTION] No scale widget or refresh method found');
+                                // dimensionLogger.debug('[CONNECTION] No scale widget or refresh method found');
                                 logger.debug('[Connection] No scale widget or refresh method found');
                             }
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {
-                            console.log('[DEBUG-CONNECTION] Processing image DISCONNECTED event');
+                            // dimensionLogger.debug('[CONNECTION] Processing image DISCONNECTED event');
 
                             // Mark image as disconnected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
@@ -3446,7 +3491,7 @@ app.registerExtension({
 
                             // Clear dimension cache when image disconnected
                             if (scaleWidget) {
-                                console.log('[DEBUG-CONNECTION] Clearing cache for disconnected image');
+                                // dimensionLogger.debug('[CONNECTION] Clearing cache for disconnected image');
                                 scaleWidget.imageDimensionsCache = null;
                                 logger.info('[Connection] Image disconnected, cleared scale dimension cache');
                             }

@@ -5,6 +5,66 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2025-11-04
+
+### Added
+- **MODE status widget** (DISABLED - performance investigation needed)
+  - Implementation complete but temporarily disabled due to canvas corruption during draw cycles
+  - When enabled: Shows current dimension calculation mode above aspect_ratio
+  - When enabled: Auto-updates when dimension sources change with simplified descriptions
+  - Issue: Custom widget causes performance overhead at 60fps, needs optimization
+  - Future: Consider stock ComfyUI widget or optimize ModeStatusWidget.draw()
+
+### Changed
+- **Debug logging converted to logger system** - Replaced console.log with logger.debug()
+  - Added `dimensionLogger` instance for dimension/cache debugging
+  - All debug logs now respect `DEBUG_SMART_RES_CALC` localStorage flag
+  - Enable: `localStorage.setItem('DEBUG_SMART_RES_CALC', 'true')`
+  - Enable verbose: `localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true')`
+  - Disable: `localStorage.removeItem('DEBUG_SMART_RES_CALC')`
+
+### Fixed
+- **AR Only mode label** - Now shows dimension source with AR source
+  - Before: "AR Only: Image AR 16:9 (1920×1080)"
+  - After: "WIDTH & image_ar: 16:9 (1920×1080)" (shows which dimension widget is active)
+  - Applies to WIDTH, HEIGHT, MEGAPIXEL, or defaults
+- **SCALE tooltip Mode line** - Now shows full context for AR Only mode
+  - Before: "Mode: HEIGHT" (missing USE IMAGE DIMS context)
+  - After: "Mode: HEIGHT & USE IMAGE DIMS AR Only" (clearly indicates image AR is being used)
+  - Helps users understand when dimension calculations use image aspect ratio
+- **SCALE tooltip overflow** - Fixed warning text overflowing tooltip box
+  - Improved word wrapping to use pixel-based measurements instead of character count
+  - Tooltip now expands dynamically to fit all content without text cutoff
+  - Warning messages properly wrap at word boundaries
+
+### Technical
+- **Logger extraction refactor** - Resolved canvas corruption issue during draw cycles
+  - Extracted `DebugLogger` to standalone ES6 module: `web/utils/debug_logger.js`
+  - Eliminated circular dependency and global scope lookup overhead
+  - Both `smart_resolution_calc.js` and `dimension_source_manager.js` now import via ES6
+  - Performance: ES6 imports optimized better by JS engines than global property access at 60fps
+  - Closes partial #5 (logger module extraction)
+- **smart_resolution_calc.js**:
+  - Added `ModeStatusWidget` class for read-only mode display
+  - Added `dimensionLogger` instance: `new DebugLogger('SmartResCalc:Dimensions')`
+  - Exposed globally: `window.smartResCalcDimensionLogger`
+  - Converted cache, refresh, toggle, and connection debug logs
+  - Uses `dimensionLogger.debug()` for standard debugging
+  - Uses `dimensionLogger.verbose()` for detailed internal state
+  - Mode widget auto-updates in `calculatePreview()` when dimensions change
+  - Imports logger from `./utils/debug_logger.js` instead of inline definition
+- **dimension_source_manager.js**:
+  - Updated `_calculateAROnly()` to track dimension source (WIDTH/HEIGHT/MEGAPIXEL/defaults)
+  - Description format: `${dimensionSource} & image_ar: ${ar}` instead of "AR Only: Image AR"
+  - Converted priority selection debug logs to `logger.debug()`
+  - Manager logs prefixed with `[Manager]` for clarity
+  - Imports logger from `../utils/debug_logger.js` instead of global scope access
+
+### Notes
+- Debug logging now consistent with existing logger system
+- Cleaner git history with proper logging infrastructure
+- MODE widget provides instant feedback on dimension calculation strategy
+
 ## [0.4.4] - 2025-11-04
 
 ### Fixed

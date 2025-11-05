@@ -15,6 +15,10 @@
  * Related Issues: #15 (umbrella), #16 (this implementation)
  * Related Docs: private/claude/2025-11-04__14-06-00__centralized-aspect-ratio-manager__EXPANSION.md
  */
+
+// Import logger from extracted module
+import { logger } from '../utils/debug_logger.js';
+
 export class DimensionSourceManager {
     constructor(node) {
         this.node = node;
@@ -62,13 +66,13 @@ export class DimensionSourceManager {
         const widgets = this._getWidgets();
         const { imageDimensionsCache } = runtimeContext;
 
-        console.log('[DEBUG-CONTEXT] runtimeContext:', runtimeContext);
-        console.log('[DEBUG-CACHE] imageDimensionsCache:', imageDimensionsCache);
-        console.log('[DEBUG-MODE] imageMode widget:', widgets.imageMode);
+        logger.verbose('[Manager] runtimeContext:', runtimeContext);
+        logger.debug('[Manager] imageDimensionsCache:', imageDimensionsCache);
+        logger.verbose('[Manager] imageMode widget:', widgets.imageMode);
 
         // PRIORITY 1: Exact Dims mode
         if (widgets.imageMode?.value?.on && widgets.imageMode.value.value === 1) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 1: Exact Dims');
+            logger.debug('[Manager] Taking Priority 1: Exact Dims');
             return this._calculateExactDims(widgets, imageDimensionsCache);
         }
 
@@ -77,36 +81,36 @@ export class DimensionSourceManager {
         const hasWidth = widgets.width?.value?.on;
         const hasHeight = widgets.height?.value?.on;
 
-        console.log('[DEBUG-WIDGETS] hasMP:', hasMP, 'hasWidth:', hasWidth, 'hasHeight:', hasHeight);
+        logger.debug('[Manager] hasMP:', hasMP, 'hasWidth:', hasWidth, 'hasHeight:', hasHeight);
 
         // PRIORITY 2: WIDTH + HEIGHT + MEGAPIXEL (all three)
         if (hasMP && hasWidth && hasHeight) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 2: MP+W+H');
+            logger.debug('[Manager] Taking Priority 2: MP+W+H');
             return this._calculateMPScalarWithAR(widgets);
         }
 
         // PRIORITY 3: Explicit dimensions (three variants)
         if (hasWidth && hasHeight) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 3: W+H explicit');
+            logger.debug('[Manager] Taking Priority 3: W+H explicit');
             return this._calculateWidthHeightExplicit(widgets);
         }
         if (hasMP && hasWidth) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 3: MP+W explicit');
+            logger.debug('[Manager] Taking Priority 3: MP+W explicit');
             return this._calculateMPWidthExplicit(widgets);
         }
         if (hasMP && hasHeight) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 3: MP+H explicit');
+            logger.debug('[Manager] Taking Priority 3: MP+H explicit');
             return this._calculateMPHeightExplicit(widgets);
         }
 
         // PRIORITY 4: AR Only mode (image AR + dimension widgets)
-        console.log('[DEBUG-PRIORITY] Checking Priority 4 (AR Only):', {
-            imageMode_on: widgets.imageMode?.value?.on,
-            imageMode_value: widgets.imageMode?.value?.value,
-            shouldTrigger: widgets.imageMode?.value?.on && widgets.imageMode.value.value === 0
-        });
+        logger.debug('[Manager] Checking Priority 4 (AR Only):', {
+             imageMode_on: widgets.imageMode?.value?.on,
+             imageMode_value: widgets.imageMode?.value?.value,
+             shouldTrigger: widgets.imageMode?.value?.on && widgets.imageMode.value.value === 0
+         });
         if (widgets.imageMode?.value?.on && widgets.imageMode.value.value === 0) {
-            console.log('[DEBUG-PRIORITY] Taking Priority 4: AR Only');
+            logger.debug('[Manager] Taking Priority 4: AR Only');
             return this._calculateAROnly(widgets, imageDimensionsCache);
         }
 
@@ -246,25 +250,29 @@ export class DimensionSourceManager {
         const hasHeight = widgets.height?.value?.on;
         const hasMP = widgets.mp?.value?.on;
 
-        let baseW, baseH;
+        let baseW, baseH, dimensionSource;
 
         if (hasWidth) {
             baseW = widgets.width.value.value;
             baseH = Math.round(baseW / imageAR.ratio);
+            dimensionSource = "WIDTH";
         } else if (hasHeight) {
             baseH = widgets.height.value.value;
             baseW = Math.round(baseH * imageAR.ratio);
+            dimensionSource = "HEIGHT";
         } else if (hasMP) {
             const targetMP = widgets.mp.value.value * 1_000_000;
             baseH = Math.sqrt(targetMP / imageAR.ratio);
             baseW = Math.round(baseH * imageAR.ratio);
             baseH = Math.round(baseH);
+            dimensionSource = "MEGAPIXEL";
         } else {
             // No dimension widget, use defaults with image AR
             const defaultMP = 1.0 * 1_000_000;
             baseH = Math.sqrt(defaultMP / imageAR.ratio);
             baseW = Math.round(baseH * imageAR.ratio);
             baseH = Math.round(baseH);
+            dimensionSource = "defaults";
         }
 
         return {
@@ -275,7 +283,7 @@ export class DimensionSourceManager {
             source: "image_ar",
             ar: imageAR,
             conflicts: this._detectConflicts("ar_only", widgets),
-            description: `AR Only: Image AR ${imageAR.aspectW}:${imageAR.aspectH} (${img.width}×${img.height})`
+            description: `${dimensionSource} & image_ar: ${imageAR.aspectW}:${imageAR.aspectH} (${img.width}×${img.height})`
         };
     }
 
