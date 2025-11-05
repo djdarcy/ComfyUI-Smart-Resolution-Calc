@@ -32,9 +32,10 @@ export class DimensionSourceManager {
      * Returns complete calculation context including mode, dimensions, AR, conflicts.
      *
      * @param {boolean} forceRefresh - Skip cache and recalculate
+     * @param {Object} runtimeContext - Runtime data (imageDimensionsCache, etc.)
      * @returns {Object} Dimension source result
      */
-    getActiveDimensionSource(forceRefresh = false) {
+    getActiveDimensionSource(forceRefresh = false, runtimeContext = {}) {
         const now = Date.now();
 
         // Return cached result if valid
@@ -43,8 +44,8 @@ export class DimensionSourceManager {
             return this.cache.dimensionSource;
         }
 
-        // Calculate fresh result
-        const result = this._calculateDimensionSource();
+        // Calculate fresh result with runtime context
+        const result = this._calculateDimensionSource(runtimeContext);
 
         // Update cache
         this.cache.dimensionSource = result;
@@ -55,13 +56,20 @@ export class DimensionSourceManager {
 
     /**
      * Internal calculation logic - implements priority hierarchy
+     * @param {Object} runtimeContext - Runtime data including imageDimensionsCache
      */
-    _calculateDimensionSource() {
+    _calculateDimensionSource(runtimeContext = {}) {
         const widgets = this._getWidgets();
+        const { imageDimensionsCache } = runtimeContext;
+
+        console.log('[DEBUG-CONTEXT] runtimeContext:', runtimeContext);
+        console.log('[DEBUG-CACHE] imageDimensionsCache:', imageDimensionsCache);
+        console.log('[DEBUG-MODE] imageMode widget:', widgets.imageMode);
 
         // PRIORITY 1: Exact Dims mode
         if (widgets.imageMode?.value?.on && widgets.imageMode.value.value === 1) {
-            return this._calculateExactDims(widgets);
+            console.log('[DEBUG-PRIORITY] Taking Priority 1: Exact Dims');
+            return this._calculateExactDims(widgets, imageDimensionsCache);
         }
 
         // Check which dimension widgets are enabled
@@ -69,25 +77,37 @@ export class DimensionSourceManager {
         const hasWidth = widgets.width?.value?.on;
         const hasHeight = widgets.height?.value?.on;
 
+        console.log('[DEBUG-WIDGETS] hasMP:', hasMP, 'hasWidth:', hasWidth, 'hasHeight:', hasHeight);
+
         // PRIORITY 2: WIDTH + HEIGHT + MEGAPIXEL (all three)
         if (hasMP && hasWidth && hasHeight) {
+            console.log('[DEBUG-PRIORITY] Taking Priority 2: MP+W+H');
             return this._calculateMPScalarWithAR(widgets);
         }
 
         // PRIORITY 3: Explicit dimensions (three variants)
         if (hasWidth && hasHeight) {
+            console.log('[DEBUG-PRIORITY] Taking Priority 3: W+H explicit');
             return this._calculateWidthHeightExplicit(widgets);
         }
         if (hasMP && hasWidth) {
+            console.log('[DEBUG-PRIORITY] Taking Priority 3: MP+W explicit');
             return this._calculateMPWidthExplicit(widgets);
         }
         if (hasMP && hasHeight) {
+            console.log('[DEBUG-PRIORITY] Taking Priority 3: MP+H explicit');
             return this._calculateMPHeightExplicit(widgets);
         }
 
         // PRIORITY 4: AR Only mode (image AR + dimension widgets)
+        console.log('[DEBUG-PRIORITY] Checking Priority 4 (AR Only):', {
+            imageMode_on: widgets.imageMode?.value?.on,
+            imageMode_value: widgets.imageMode?.value?.value,
+            shouldTrigger: widgets.imageMode?.value?.on && widgets.imageMode.value.value === 0
+        });
         if (widgets.imageMode?.value?.on && widgets.imageMode.value.value === 0) {
-            return this._calculateAROnly(widgets);
+            console.log('[DEBUG-PRIORITY] Taking Priority 4: AR Only');
+            return this._calculateAROnly(widgets, imageDimensionsCache);
         }
 
         // PRIORITY 5: Single dimension with AR
@@ -109,15 +129,13 @@ export class DimensionSourceManager {
     // Priority Level Implementations
     // ========================================
 
-    _calculateExactDims(widgets) {
-        const scaleWidget = this.node.widgets.find(w => w.name === "scale");
-
-        if (!scaleWidget?.imageDimensionsCache) {
+    _calculateExactDims(widgets, imageDimensionsCache) {
+        if (!imageDimensionsCache) {
             // No image loaded, fall back to defaults
             return this._calculateDefaults(widgets);
         }
 
-        const img = scaleWidget.imageDimensionsCache;
+        const img = imageDimensionsCache;
         const ar = this._computeARFromDimensions(img.width, img.height);
 
         return {
@@ -214,15 +232,13 @@ export class DimensionSourceManager {
         };
     }
 
-    _calculateAROnly(widgets) {
-        const scaleWidget = this.node.widgets.find(w => w.name === "scale");
-
-        if (!scaleWidget?.imageDimensionsCache) {
+    _calculateAROnly(widgets, imageDimensionsCache) {
+        if (!imageDimensionsCache) {
             // No image, fall back to defaults
             return this._calculateDefaults(widgets);
         }
 
-        const img = scaleWidget.imageDimensionsCache;
+        const img = imageDimensionsCache;
         const imageAR = this._computeARFromDimensions(img.width, img.height);
 
         // Use image AR with dimension widgets

@@ -5,6 +5,42 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2025-11-04
+
+### Fixed
+- **Critical: USE IMAGE DIMS = AR Only integration** - Manager now receives imageDimensionsCache
+  - Pass runtime context to `getActiveDimensionSource(forceRefresh, runtimeContext)`
+  - `ScaleWidget.calculatePreview()` passes `{imageDimensionsCache: this.imageDimensionsCache}`
+  - `_calculateExactDims()` and `_calculateAROnly()` now use passed cache instead of querying ScaleWidget
+  - Fixes broken behavior: Image 1024×1024 (1:1) + HEIGHT 640 now correctly gives 640×640 (not 866×1155)
+  - Image AR properly used when AR Only mode enabled with dimension widgets
+- **Mode line missing for WIDTH+HEIGHT** - `getSimplifiedModeLabel()` now handles "Explicit dimensions" description
+  - Returns "WIDTH & HEIGHT" for explicit dimension mode
+  - Mode line now appears for all widget combinations
+- **Incorrect mode reporting** - Fixed cascading issue from AR Only bug
+  - Mode now correctly shows "HEIGHT & image_ar" instead of "MEGAPIXEL & dropdown_ar & defaults"
+
+### Technical
+- **DimensionSourceManager API**:
+  - `getActiveDimensionSource(forceRefresh, runtimeContext)` - Added optional `runtimeContext` parameter
+  - `_calculateDimensionSource(runtimeContext)` - Extracts `imageDimensionsCache` from context
+  - `_calculateExactDims(widgets, imageDimensionsCache)` - Uses passed cache parameter
+  - `_calculateAROnly(widgets, imageDimensionsCache)` - Uses passed cache parameter
+- **ScaleWidget integration**:
+  - Updated manager call to pass `{imageDimensionsCache: this.imageDimensionsCache}`
+  - Maintains separation of concerns (widget has runtime data, manager has calculation logic)
+- **Mode label logic**:
+  - Early check for "Explicit dimensions" pattern
+  - Returns "WIDTH & HEIGHT" before falling through to source extraction
+
+### Notes
+- **All v0.4.3 known issues resolved** - USE IMAGE DIMS = AR Only works correctly
+- **Mode visibility enhancement** (v0.4.5 planned):
+  - Add persistent MODE status widget visible at all times
+  - Position above aspect_ratio widget
+  - Auto-updates on dimension changes
+  - User suggestion: "MODE line should be visible at all times or easily accessible with mouseover"
+
 ## [0.4.3] - 2025-11-04
 
 ### Changed

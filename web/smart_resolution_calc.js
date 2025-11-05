@@ -783,7 +783,12 @@ class ScaleWidget {
             return null;
         }
 
-        const dimSource = node.dimensionSourceManager.getActiveDimensionSource();
+        // Pass runtime context including image dimensions cache
+        console.log('[DEBUG-CACHE] imageDimensionsCache:', this.imageDimensionsCache);
+        console.log('[DEBUG-CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
+        const dimSource = node.dimensionSourceManager.getActiveDimensionSource(false, {
+            imageDimensionsCache: this.imageDimensionsCache
+        });
         if (!dimSource) {
             logger.warn('[ScaleWidget] DimensionSourceManager returned null');
             return null;
@@ -829,10 +834,15 @@ class ScaleWidget {
      * Called when image connected/disconnected or USE_IMAGE toggled
      */
     async refreshImageDimensions(node) {
+        console.log('[DEBUG-REFRESH] refreshImageDimensions called');
+
         // Check if USE_IMAGE is enabled
         const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
+        console.log('[DEBUG-REFRESH] imageModeWidget:', imageModeWidget);
+        console.log('[DEBUG-REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
+            console.log('[DEBUG-REFRESH] USE_IMAGE disabled, clearing cache');
             logger.verbose('USE_IMAGE disabled, clearing dimension cache');
             return;
         }
@@ -840,8 +850,11 @@ class ScaleWidget {
         // Get connected image node
         const imageInput = node.inputs?.find(inp => inp.name === "image");
         const link = imageInput?.link;
+        console.log('[DEBUG-REFRESH] imageInput:', imageInput);
+        console.log('[DEBUG-REFRESH] link:', link);
         if (!link) {
             this.imageDimensionsCache = null;
+            console.log('[DEBUG-REFRESH] No image connected, clearing cache');
             logger.verbose('No image connected, clearing dimension cache');
             return;
         }
@@ -849,32 +862,41 @@ class ScaleWidget {
         // Get source node from link
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
+        console.log('[DEBUG-REFRESH] sourceNode:', sourceNode);
         if (!sourceNode) {
             this.imageDimensionsCache = null;
+            console.log('[DEBUG-REFRESH] Source node not found, clearing cache');
             logger.verbose('Source node not found, clearing dimension cache');
             return;
         }
 
         // Check cache validity (same image path)
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
+        console.log('[DEBUG-REFRESH] filePath:', filePath);
+        console.log('[DEBUG-REFRESH] Current cache:', this.imageDimensionsCache);
         if (this.imageDimensionsCache?.path === filePath && filePath) {
+            console.log('[DEBUG-REFRESH] Using cached dimensions for:', filePath);
             logger.verbose(`Using cached dimensions for ${filePath}`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
+            console.log('[DEBUG-REFRESH] Already fetching, skipping');
             logger.verbose('Already fetching dimensions, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
+        console.log('[DEBUG-REFRESH] Starting hybrid fetch strategy');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
             if (filePath) {
+                console.log('[DEBUG-REFRESH] Tier 1: Attempting server endpoint for:', filePath);
                 logger.debug(`[ScaleWidget] Attempting server endpoint for: ${filePath}`);
                 const dims = await ImageDimensionUtils.fetchDimensionsFromServer(filePath);
+                console.log('[DEBUG-REFRESH] Server response:', dims);
                 logger.debug(`[ScaleWidget] Server response:`, dims);
                 if (dims?.success) {
                     this.imageDimensionsCache = {
@@ -883,6 +905,7 @@ class ScaleWidget {
                         timestamp: Date.now(),
                         path: filePath
                     };
+                    console.log('[DEBUG-REFRESH] ✓ Cached from server:', dims.width, 'x', dims.height);
                     logger.info(`✓ Cached image dimensions from server: ${dims.width}×${dims.height}`);
 
                     // Invalidate dimension source cache when image dimensions change
@@ -891,14 +914,18 @@ class ScaleWidget {
                     node.setDirtyCanvas(true, true);
                     return;
                 }
+                console.log('[DEBUG-REFRESH] Server endpoint failed or returned no data');
                 logger.debug('[ScaleWidget] Server endpoint returned no data or failed');
             } else {
+                console.log('[DEBUG-REFRESH] No file path (not a LoadImage node?)');
                 logger.debug('[ScaleWidget] No file path found (not a LoadImage node?)');
             }
 
             // Tier 2: Info parsing (cached execution output)
+            console.log('[DEBUG-REFRESH] Tier 2: Attempting info parsing');
             logger.verbose('Attempting info parsing for cached dimensions');
             const cachedDims = ImageDimensionUtils.parseDimensionsFromInfo(node);
+            console.log('[DEBUG-REFRESH] Info parsing result:', cachedDims);
             if (cachedDims) {
                 this.imageDimensionsCache = {
                     width: cachedDims.width,
@@ -906,6 +933,7 @@ class ScaleWidget {
                     timestamp: Date.now(),
                     path: filePath
                 };
+                console.log('[DEBUG-REFRESH] ✓ Cached from info:', cachedDims.width, 'x', cachedDims.height);
                 logger.debug(`✓ Cached image dimensions from info: ${cachedDims.width}×${cachedDims.height}`);
 
                 // Invalidate dimension source cache when image dimensions change
@@ -914,14 +942,17 @@ class ScaleWidget {
                 node.setDirtyCanvas(true, true);
                 return;
             }
+            console.log('[DEBUG-REFRESH] Info parsing found no dimensions');
             logger.verbose('Info parsing found no dimensions');
 
             // Tier 3: Clear cache (will fallback to widget values in calculatePreview)
+            console.log('[DEBUG-REFRESH] Tier 3: No dimensions available, clearing cache');
             logger.verbose('No dimensions available from any source, clearing cache');
             this.imageDimensionsCache = null;
 
         } finally {
             this.fetchingDimensions = false;
+            console.log('[DEBUG-REFRESH] Fetch complete, fetchingDimensions = false');
         }
     }
 
@@ -1075,7 +1106,17 @@ class ScaleWidget {
      * @returns {string} Simplified label (e.g., "HEIGHT & custom_ratio")
      */
     getSimplifiedModeLabel(mode, description) {
-        // Extract active sources from description (more reliable than parsing mode)
+        // Check for special modes first
+        if (description.includes('Exact Dims') || description.includes('exact image')) {
+            return 'Image Exact Dims';
+        }
+
+        // Check for WIDTH+HEIGHT explicit (Priority 3)
+        if (description.includes('Explicit dimensions')) {
+            return 'WIDTH & HEIGHT';
+        }
+
+        // Extract active sources from description
         const sources = [];
 
         // Check for dimension widgets
@@ -1098,10 +1139,7 @@ class ScaleWidget {
             sources.push('dropdown_ar');
         }
 
-        // Check for image modes
-        if (description.includes('Exact Dims') || description.includes('exact image')) {
-            return 'Image Exact Dims';
-        }
+        // Check for AR Only mode
         if (description.includes('AR Only') && description.includes('image')) {
             sources.push('image_ar_only');
         }
@@ -2125,24 +2163,34 @@ class ImageModeWidget {
                 // Symmetric toggle behavior would skip this check (always allow)
 
                 this.value.on = newState;
+                console.log('[DEBUG-TOGGLE] Image mode toggled:', oldState, '→', newState);
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
                 // Invalidate dimension source cache when USE_IMAGE toggle changes
                 node.dimensionSourceManager?.invalidateCache();
 
                 // Trigger scale dimension refresh when USE_IMAGE is toggled
-                const scaleWidget = node.widgets?.find(w => w.name === "scale");
+                // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
+                const scaleWidget = node.widgets?.find(w => w instanceof ScaleWidget);
+                console.log('[DEBUG-TOGGLE] scaleWidget found:', scaleWidget);
+                console.log('[DEBUG-TOGGLE] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
+                console.log('[DEBUG-TOGGLE] typeof refreshImageDimensions:', typeof scaleWidget?.refreshImageDimensions);
+
                 if (scaleWidget?.refreshImageDimensions) {
+                    console.log('[DEBUG-TOGGLE] Inside refresh condition, newState:', newState);
                     if (newState) {
                         // Toggled ON - fetch image dimensions
+                        console.log('[DEBUG-TOGGLE] Calling refreshImageDimensions for ON state');
                         logger.info('[Toggle] USE_IMAGE enabled, triggering scale dimension refresh');
                         scaleWidget.refreshImageDimensions(node);
                     } else {
                         // Toggled OFF - clear cache
+                        console.log('[DEBUG-TOGGLE] Clearing cache for OFF state');
                         scaleWidget.imageDimensionsCache = null;
                         logger.info('[Toggle] USE_IMAGE disabled, cleared scale dimension cache');
                     }
                 } else {
+                    console.log('[DEBUG-TOGGLE] No scale widget or refresh method found');
                     logger.debug('[Toggle] No scale widget or refresh method found');
                 }
 
@@ -3358,11 +3406,20 @@ app.registerExtension({
                     const input = this.inputs[index];
 
                     if (input.name === "image") {
+                        console.log('[DEBUG-CONNECTION] Image connection change event, connected:', connected);
+
                         // Find the ImageModeWidget and ScaleWidget
                         const imageModeWidget = this.widgets?.find(w => w.name === "image_mode");
-                        const scaleWidget = this.widgets?.find(w => w.name === "scale");
+                        // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
+                        const scaleWidget = this.widgets?.find(w => w instanceof ScaleWidget);
+
+                        console.log('[DEBUG-CONNECTION] imageModeWidget found:', imageModeWidget);
+                        console.log('[DEBUG-CONNECTION] scaleWidget found:', scaleWidget);
+                        console.log('[DEBUG-CONNECTION] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
 
                         if (connected) {
+                            console.log('[DEBUG-CONNECTION] Processing image CONNECTED event');
+
                             // Mark image as connected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
                                 imageModeWidget.imageDisconnected = false;
@@ -3370,14 +3427,18 @@ app.registerExtension({
 
                             // Trigger dimension cache refresh for scale tooltip
                             if (scaleWidget && scaleWidget.refreshImageDimensions) {
+                                console.log('[DEBUG-CONNECTION] Calling refreshImageDimensions for connected image');
                                 logger.info('[Connection] Image connected, triggering scale dimension refresh');
                                 scaleWidget.refreshImageDimensions(this);
                             } else {
+                                console.log('[DEBUG-CONNECTION] No scale widget or refresh method found');
                                 logger.debug('[Connection] No scale widget or refresh method found');
                             }
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {
+                            console.log('[DEBUG-CONNECTION] Processing image DISCONNECTED event');
+
                             // Mark image as disconnected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
                                 imageModeWidget.imageDisconnected = true;
@@ -3385,6 +3446,7 @@ app.registerExtension({
 
                             // Clear dimension cache when image disconnected
                             if (scaleWidget) {
+                                console.log('[DEBUG-CONNECTION] Clearing cache for disconnected image');
                                 scaleWidget.imageDimensionsCache = null;
                                 logger.info('[Connection] Image disconnected, cleared scale dimension cache');
                             }
