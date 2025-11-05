@@ -77,7 +77,7 @@ class SmartResolutionCalc:
                 "mode_status": ("STRING", {
                     "default": "Calculating...",
                     "multiline": False,
-                    "tooltip": "Shows current dimension calculation mode (updated automatically)"
+                    "tooltip": "Shows current dimension calculation mode (updated automatically, read-only)"
                 }),
                 "custom_aspect_ratio": ("STRING", {"default": "16:9"}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),

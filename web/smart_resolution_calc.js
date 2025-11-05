@@ -1141,13 +1141,7 @@ class ScaleWidget {
             `━━━━━━━━━━━━━━━━━━━━━━━━`
         ];
 
-        // Add simplified mode label (shows sources, not values)
-        if (preview.mode) {
-            const modeLabel = this.getSimplifiedModeLabel(preview);
-            if (modeLabel) {
-                lines.push(`Mode: ${modeLabel}`);
-            }
-        }
+        // Note: Mode line removed - now shown in dedicated mode_status widget above aspect_ratio
 
         // Add dimension calculations
         lines.push(`Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`);
@@ -1684,35 +1678,16 @@ class ModeStatusWidget {
 
         const x = 15;  // Standard widget left margin
         const displayHeight = 24;
-        const radius = 4;
         const rectWidth = width - 30;
 
-        // Background with rounded corners
+        // Background (simple rectangle like ColorPickerButton)
         ctx.fillStyle = this.bgColor;
-        ctx.beginPath();
-
-        // Use ctx.roundRect if available (modern browsers), otherwise manual
-        if (ctx.roundRect) {
-            ctx.roundRect(x, y, rectWidth, displayHeight, radius);
-        } else {
-            // Manual rounded rectangle for older browsers
-            ctx.moveTo(x + radius, y);
-            ctx.lineTo(x + rectWidth - radius, y);
-            ctx.arcTo(x + rectWidth, y, x + rectWidth, y + radius, radius);
-            ctx.lineTo(x + rectWidth, y + displayHeight - radius);
-            ctx.arcTo(x + rectWidth, y + displayHeight, x + rectWidth - radius, y + displayHeight, radius);
-            ctx.lineTo(x + radius, y + displayHeight);
-            ctx.arcTo(x, y + displayHeight, x, y + displayHeight - radius, radius);
-            ctx.lineTo(x, y + radius);
-            ctx.arcTo(x, y, x + radius, y, radius);
-            ctx.closePath();
-        }
-        ctx.fill();
+        ctx.fillRect(x, y, rectWidth, displayHeight);
 
         // Border
         ctx.strokeStyle = this.borderColor;
         ctx.lineWidth = 1;
-        ctx.stroke();
+        ctx.strokeRect(x, y, rectWidth, displayHeight);
 
         // Text (using cached truncation)
         ctx.fillStyle = this.textColor;
@@ -2972,14 +2947,25 @@ app.registerExtension({
                 this.dimensionSourceManager = new DimensionSourceManager(this);
                 logger.debug('Initialized DimensionSourceManager');
 
-                // Position MODE widget above aspect_ratio for better UX
+                // Hide the native mode_status widget (we'll create a custom widget instead)
+                const nativeModeStatusWidget = this.widgets.find(w => w.name === "mode_status");
+                if (nativeModeStatusWidget) {
+                    nativeModeStatusWidget.type = "converted-widget";
+                    nativeModeStatusWidget.computeSize = () => [0, -4];  // Hide it from layout
+                    logger.debug('Hidden native mode_status widget');
+                }
+
+                // Create custom MODE status widget using existing ModeStatusWidget class
+                const modeStatusWidget = new ModeStatusWidget("mode_status");
+
+                // Insert custom widget above aspect_ratio
                 const aspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
-                const modeStatusIndex = this.widgets.findIndex(w => w.name === "mode_status");
-                if (aspectRatioIndex !== -1 && modeStatusIndex !== -1) {
-                    const [modeWidget] = this.widgets.splice(modeStatusIndex, 1);
-                    const newAspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
-                    this.widgets.splice(newAspectRatioIndex, 0, modeWidget);
-                    logger.debug('Positioned mode_status widget above aspect_ratio');
+                if (aspectRatioIndex !== -1) {
+                    this.widgets.splice(aspectRatioIndex, 0, modeStatusWidget);
+                    logger.debug('Created custom MODE status widget above aspect_ratio');
+                } else {
+                    this.widgets.push(modeStatusWidget);
+                    logger.debug('Created custom MODE status widget at end');
                 }
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
