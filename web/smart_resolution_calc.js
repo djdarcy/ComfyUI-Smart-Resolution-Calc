@@ -1072,7 +1072,7 @@ class ScaleWidget {
             } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
                 sources.push('image_ar');
             } else if (description.includes('dropdown') || description.includes('Dropdown')) {
-                sources.push('dropdown_ar');
+                sources.push('aspect_ratio');
             }
 
             // Check for defaults
@@ -1103,7 +1103,7 @@ class ScaleWidget {
         } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
             sources.push('image_ar');
         } else if (description.includes('dropdown') || description.includes('Dropdown')) {
-            sources.push('dropdown_ar');
+            sources.push('aspect_ratio');
         }
 
         // Check for defaults
@@ -1680,24 +1680,43 @@ class ModeStatusWidget {
         const displayHeight = 24;
         const rectWidth = width - 30;
 
-        // Background (simple rectangle like ColorPickerButton)
-        ctx.fillStyle = this.bgColor;
-        ctx.fillRect(x, y, rectWidth, displayHeight);
+        // Label section dimensions
+        const labelText = "Mode:";
+        ctx.font = "12px monospace";
+        const labelWidth = ctx.measureText(labelText).width + 16;  // Text + padding
 
-        // Border
+        // Draw label section with darker background (like USE IMAGE DIMS?)
+        ctx.fillStyle = "#1a1a1a";  // Darker background for label
+        ctx.fillRect(x, y, labelWidth, displayHeight);
+
+        // Draw label text in brighter white
+        ctx.fillStyle = "#dddddd";  // Brighter white for label
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(labelText, x + 8, y + displayHeight / 2);
+
+        // Draw status section with lighter gray background (low-key)
+        ctx.fillStyle = this.bgColor;  // #2a2a2a
+        ctx.fillRect(x + labelWidth, y, rectWidth - labelWidth, displayHeight);
+
+        // Draw status text in muted gray
+        ctx.fillStyle = this.textColor;  // #aaaaaa
+        const statusX = x + labelWidth + 8;
+        const maxWidth = rectWidth - labelWidth - 16;
+        const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
+        ctx.fillText(displayText, statusX, y + displayHeight / 2);
+
+        // Border around entire widget
         ctx.strokeStyle = this.borderColor;
         ctx.lineWidth = 1;
         ctx.strokeRect(x, y, rectWidth, displayHeight);
 
-        // Text (using cached truncation)
-        ctx.fillStyle = this.textColor;
-        ctx.font = "12px monospace";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-
-        const maxWidth = rectWidth - 16;
-        const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
-        ctx.fillText(displayText, x + 8, y + displayHeight / 2);
+        // Divider line between label and status
+        ctx.strokeStyle = "#3a3a3a";
+        ctx.beginPath();
+        ctx.moveTo(x + labelWidth, y);
+        ctx.lineTo(x + labelWidth, y + displayHeight);
+        ctx.stroke();
 
         ctx.restore();
     }
