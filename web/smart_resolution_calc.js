@@ -848,6 +848,7 @@ class ScaleWidget {
 
                     // Invalidate dimension source cache when image dimensions change
                     node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
 
                     node.setDirtyCanvas(true, true);
                     return;
@@ -876,6 +877,7 @@ class ScaleWidget {
 
                 // Invalidate dimension source cache when image dimensions change
                 node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
 
                 node.setDirtyCanvas(true, true);
                 return;
@@ -1592,17 +1594,69 @@ class ScaleWidget {
 /**
  * Mode Status Widget - Read-only display showing current dimension calculation mode
  * Positioned above aspect_ratio to provide at-a-glance mode visibility
+ *
+ * Performance optimizations:
+ * - Caches text truncation to avoid ctx.measureText() loops at 60fps
+ * - Uses ctx.roundRect() when available for simpler drawing
+ * - Only recalculates displayText when value changes
  */
 class ModeStatusWidget {
     constructor(name = "mode_status") {
         this.name = name;
         this.type = "custom";
         this.value = "Calculating...";  // Default text
+        this._cachedDisplayText = null;  // Cached truncated text
+        this._lastValue = null;           // Last value used for cache
+        this._lastMaxWidth = null;        // Last max width used for cache
 
         // Styling
         this.bgColor = "#2a2a2a";
         this.textColor = "#aaaaaa";
         this.borderColor = "#3a3a3a";
+    }
+
+    /**
+     * Calculate truncated text (cached to avoid expensive measureText loops)
+     */
+    _getTruncatedText(ctx, text, maxWidth) {
+        // Return cached value if nothing changed
+        if (text === this._lastValue && maxWidth === this._lastMaxWidth && this._cachedDisplayText) {
+            return this._cachedDisplayText;
+        }
+
+        // Calculate truncation
+        let displayText = text || "Unknown";
+        ctx.font = "12px monospace";  // Ensure font is set for measurement
+        const textWidth = ctx.measureText(displayText).width;
+
+        if (textWidth > maxWidth) {
+            // Binary search for optimal truncation point (faster than while loop)
+            let low = 0;
+            let high = displayText.length;
+            let bestFit = 0;
+
+            while (low <= high) {
+                const mid = Math.floor((low + high) / 2);
+                const testText = displayText.substring(0, mid) + "...";
+                const testWidth = ctx.measureText(testText).width;
+
+                if (testWidth <= maxWidth) {
+                    bestFit = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+
+            displayText = displayText.substring(0, bestFit) + "...";
+        }
+
+        // Cache result
+        this._cachedDisplayText = displayText;
+        this._lastValue = text;
+        this._lastMaxWidth = maxWidth;
+
+        return displayText;
     }
 
     draw(ctx, node, width, y, height) {
@@ -1613,19 +1667,26 @@ class ModeStatusWidget {
         const radius = 4;
         const rectWidth = width - 30;
 
-        // Background with rounded corners (manual implementation for compatibility)
+        // Background with rounded corners
         ctx.fillStyle = this.bgColor;
         ctx.beginPath();
-        ctx.moveTo(x + radius, y);
-        ctx.lineTo(x + rectWidth - radius, y);
-        ctx.arcTo(x + rectWidth, y, x + rectWidth, y + radius, radius);
-        ctx.lineTo(x + rectWidth, y + displayHeight - radius);
-        ctx.arcTo(x + rectWidth, y + displayHeight, x + rectWidth - radius, y + displayHeight, radius);
-        ctx.lineTo(x + radius, y + displayHeight);
-        ctx.arcTo(x, y + displayHeight, x, y + displayHeight - radius, radius);
-        ctx.lineTo(x, y + radius);
-        ctx.arcTo(x, y, x + radius, y, radius);
-        ctx.closePath();
+
+        // Use ctx.roundRect if available (modern browsers), otherwise manual
+        if (ctx.roundRect) {
+            ctx.roundRect(x, y, rectWidth, displayHeight, radius);
+        } else {
+            // Manual rounded rectangle for older browsers
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + rectWidth - radius, y);
+            ctx.arcTo(x + rectWidth, y, x + rectWidth, y + radius, radius);
+            ctx.lineTo(x + rectWidth, y + displayHeight - radius);
+            ctx.arcTo(x + rectWidth, y + displayHeight, x + rectWidth - radius, y + displayHeight, radius);
+            ctx.lineTo(x + radius, y + displayHeight);
+            ctx.arcTo(x, y + displayHeight, x, y + displayHeight - radius, radius);
+            ctx.lineTo(x, y + radius);
+            ctx.arcTo(x, y, x + radius, y, radius);
+            ctx.closePath();
+        }
         ctx.fill();
 
         // Border
@@ -1633,23 +1694,14 @@ class ModeStatusWidget {
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Text
+        // Text (using cached truncation)
         ctx.fillStyle = this.textColor;
         ctx.font = "12px monospace";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
 
-        // Truncate text if too long
         const maxWidth = rectWidth - 16;
-        let displayText = this.value || "Unknown";
-        const textWidth = ctx.measureText(displayText).width;
-        if (textWidth > maxWidth) {
-            while (ctx.measureText(displayText + "...").width > maxWidth && displayText.length > 0) {
-                displayText = displayText.slice(0, -1);
-            }
-            displayText += "...";
-        }
-
+        const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
         ctx.fillText(displayText, x + 8, y + displayHeight / 2);
 
         ctx.restore();
@@ -1661,7 +1713,10 @@ class ModeStatusWidget {
 
     // Update the mode display text
     updateMode(modeDescription) {
-        this.value = modeDescription || "Unknown";
+        if (this.value !== modeDescription) {
+            this.value = modeDescription || "Unknown";
+            // Cache will be invalidated on next draw
+        }
     }
 }
 
@@ -1887,6 +1942,7 @@ class DimensionWidget {
 
                 // Invalidate dimension source cache when toggle changes
                 node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
 
                 node.setDirtyCanvas(true);
                 return true;
@@ -1905,6 +1961,7 @@ class DimensionWidget {
 
                     // Invalidate dimension source cache when value changes
                     node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget
 
                     node.setDirtyCanvas(true);
                     return true;
@@ -1916,6 +1973,7 @@ class DimensionWidget {
 
                     // Invalidate dimension source cache when value changes
                     node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget
 
                     node.setDirtyCanvas(true);
                     return true;
@@ -1931,6 +1989,7 @@ class DimensionWidget {
 
                             // Invalidate dimension source cache when value changes
                             node.dimensionSourceManager?.invalidateCache();
+                            node.updateModeWidget?.(); // Update MODE widget
 
                             node.setDirtyCanvas(true);
                         }
@@ -2195,6 +2254,7 @@ class ImageModeWidget {
 
                 // Invalidate dimension source cache when USE_IMAGE toggle changes
                 node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
 
                 // Trigger scale dimension refresh when USE_IMAGE is toggled
                 // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
@@ -2237,6 +2297,7 @@ class ImageModeWidget {
 
                 // Invalidate dimension source cache when mode changes (AR Only ↔ Exact Dims)
                 node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
 
                 node.setDirtyCanvas(true);
                 return true;
@@ -2868,8 +2929,11 @@ app.registerExtension({
 
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
+                this.scaleWidgetInstance = scaleWidget; // Store reference for updateModeWidget
 
-                // TESTING: MODE status widget commented out to isolate corruption
+                // MODE widget: Optimizations insufficient - custom widgets in draw cycle cause corruption
+                // Even with caching and binary search, draw() participation at 60fps is too expensive
+                // Alternative approaches needed: DOM overlay, stock widget, or non-draw mechanism
                 // const modeStatusWidget = new ModeStatusWidget("mode_status");
 
                 // Add widgets to node (image mode first, then copy button, then dimension controls, then scale)
@@ -2879,7 +2943,7 @@ app.registerExtension({
                 this.addCustomWidget(widthWidget);
                 this.addCustomWidget(heightWidget);
                 this.addCustomWidget(scaleWidget);
-                // TESTING: this.addCustomWidget(modeStatusWidget);
+                // this.addCustomWidget(modeStatusWidget);
 
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
@@ -2888,19 +2952,15 @@ app.registerExtension({
                 this.dimensionSourceManager = new DimensionSourceManager(this);
                 logger.debug('Initialized DimensionSourceManager');
 
-                // TESTING: Position mode_status widget above aspect_ratio (commented out)
-                // const aspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
-                // const modeStatusIndex = this.widgets.findIndex(w => w.name === "mode_status");
-                // if (aspectRatioIndex !== -1 && modeStatusIndex !== -1) {
-                //     // Remove mode_status from its current position
-                //     const [modeWidget] = this.widgets.splice(modeStatusIndex, 1);
-                //     // Insert it right before aspect_ratio
-                //     const newAspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
-                //     this.widgets.splice(newAspectRatioIndex, 0, modeWidget);
-                //     logger.debug('Positioned mode_status widget above aspect_ratio');
-                // } else {
-                //     logger.debug('Could not position mode_status (aspect_ratio or mode_status not found)');
-                // }
+                // Position MODE widget above aspect_ratio for better UX
+                const aspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
+                const modeStatusIndex = this.widgets.findIndex(w => w.name === "mode_status");
+                if (aspectRatioIndex !== -1 && modeStatusIndex !== -1) {
+                    const [modeWidget] = this.widgets.splice(modeStatusIndex, 1);
+                    const newAspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
+                    this.widgets.splice(newAspectRatioIndex, 0, modeWidget);
+                    logger.debug('Positioned mode_status widget above aspect_ratio');
+                }
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
@@ -2913,6 +2973,38 @@ app.registerExtension({
 
                 // Set initial size (widgets will auto-adjust)
                 this.setSize(this.computeSize());
+
+                // Helper function to update MODE widget with current dimension source
+                const updateModeWidget = () => {
+                    const modeWidget = this.widgets.find(w => w.name === "mode_status");
+                    if (modeWidget && this.dimensionSourceManager) {
+                        // Get imageDimensionsCache from stored ScaleWidget reference
+                        const imageDimensionsCache = this.scaleWidgetInstance?.imageDimensionsCache;
+
+                        // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
+                        const dimSource = this.dimensionSourceManager.getActiveDimensionSource(false, {
+                            imageDimensionsCache: imageDimensionsCache
+                        });
+
+                        if (dimSource) {
+                            const scaleWidget = this.widgets.find(w => w.name === "scale" && w.type === "custom");
+                            if (scaleWidget && scaleWidget.getSimplifiedModeLabel) {
+                                const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource.mode, dimSource.description);
+                                if (modeLabel) {
+                                    // Update native ComfyUI widget value (not custom widget)
+                                    modeWidget.value = modeLabel;
+                                    this.setDirtyCanvas(true, false);  // Trigger redraw without full graph recompute
+                                }
+                            }
+                        }
+                    }
+                };
+
+                // Update MODE widget with initial state
+                setTimeout(() => updateModeWidget(), 100); // Delay to ensure everything is initialized
+
+                // Store updateModeWidget on node for access from custom widgets
+                this.updateModeWidget = updateModeWidget;
 
                 // Wrap native ComfyUI widgets with tooltip support
                 // These are created by Python node definition, not custom widgets
@@ -2950,6 +3042,7 @@ app.registerExtension({
                         }
                         // Invalidate cache when custom_ratio toggle changes
                         this.dimensionSourceManager?.invalidateCache();
+                        updateModeWidget(); // Update MODE widget
                         logger.debug('custom_ratio changed, cache invalidated');
                     };
                 }
@@ -2962,6 +3055,7 @@ app.registerExtension({
                         }
                         // Invalidate cache when custom_aspect_ratio text changes
                         this.dimensionSourceManager?.invalidateCache();
+                        updateModeWidget(); // Update MODE widget
                         logger.debug('custom_aspect_ratio changed, cache invalidated');
                     };
                 }
@@ -2974,6 +3068,7 @@ app.registerExtension({
                         }
                         // Invalidate cache when aspect_ratio dropdown changes
                         this.dimensionSourceManager?.invalidateCache();
+                        updateModeWidget(); // Update MODE widget
                         logger.debug('aspect_ratio changed, cache invalidated');
                     };
                 }

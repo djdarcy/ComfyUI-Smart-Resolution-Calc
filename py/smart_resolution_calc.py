@@ -74,6 +74,11 @@ class SmartResolutionCalc:
                 "custom_ratio": ("BOOLEAN", {"default": False, "label_on": "Enable", "label_off": "Disable"}),
             },
             "optional": {
+                "mode_status": ("STRING", {
+                    "default": "Calculating...",
+                    "multiline": False,
+                    "tooltip": "Shows current dimension calculation mode (updated automatically)"
+                }),
                 "custom_aspect_ratio": ("STRING", {"default": "16:9"}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
                 "scale": ("FLOAT", {
