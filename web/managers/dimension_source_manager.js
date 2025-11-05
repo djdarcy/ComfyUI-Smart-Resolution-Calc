@@ -175,7 +175,8 @@ export class DimensionSourceManager {
             source: "widgets_mp_scalar",
             ar: ar,
             conflicts: this._detectConflicts("mp_scalar_with_ar", widgets),
-            description: `MP+W+H: AR ${ar.aspectW}:${ar.aspectH} from ${w}×${h}, scaled to ${widgets.mp.value.value}MP`
+            description: `MP+W+H: AR ${ar.aspectW}:${ar.aspectH} from ${w}×${h}, scaled to ${widgets.mp.value.value}MP`,
+            activeSources: ['WIDTH', 'HEIGHT', 'MEGAPIXEL'] // Track enabled widgets
         };
     }
 
@@ -192,7 +193,8 @@ export class DimensionSourceManager {
             source: "widgets_explicit",
             ar: ar,
             conflicts: this._detectConflicts("width_height_explicit", widgets),
-            description: `Explicit dimensions: ${w}×${h} (AR ${ar.aspectW}:${ar.aspectH} implied)`
+            description: `Explicit dimensions: ${w}×${h} (AR ${ar.aspectW}:${ar.aspectH} implied)`,
+            activeSources: ['WIDTH', 'HEIGHT'] // Track enabled widgets
         };
     }
 
@@ -212,7 +214,8 @@ export class DimensionSourceManager {
             source: "widgets_mp_computed",
             ar: ar,
             conflicts: this._detectConflicts("mp_width_explicit", widgets),
-            description: `MP+W: ${w}×${h} (H computed from ${widgets.mp.value.value}MP, AR ${ar.aspectW}:${ar.aspectH} implied)`
+            description: `MP+W: ${w}×${h} (H computed from ${widgets.mp.value.value}MP, AR ${ar.aspectW}:${ar.aspectH} implied)`,
+            activeSources: ['WIDTH', 'MEGAPIXEL'] // Track enabled widgets
         };
     }
 
@@ -232,7 +235,8 @@ export class DimensionSourceManager {
             source: "widgets_mp_computed",
             ar: ar,
             conflicts: this._detectConflicts("mp_height_explicit", widgets),
-            description: `MP+H: ${w}×${h} (W computed from ${widgets.mp.value.value}MP, AR ${ar.aspectW}:${ar.aspectH} implied)`
+            description: `MP+H: ${w}×${h} (W computed from ${widgets.mp.value.value}MP, AR ${ar.aspectW}:${ar.aspectH} implied)`,
+            activeSources: ['HEIGHT', 'MEGAPIXEL'] // Track enabled widgets
         };
     }
 
@@ -300,7 +304,8 @@ export class DimensionSourceManager {
             source: "widget_with_ar",
             ar: ar,
             conflicts: this._detectConflicts("width_with_ar", widgets),
-            description: `WIDTH ${w} with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`
+            description: `WIDTH ${w} with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`,
+            activeSources: ['WIDTH'] // Track enabled widgets
         };
     }
 
@@ -317,7 +322,8 @@ export class DimensionSourceManager {
             source: "widget_with_ar",
             ar: ar,
             conflicts: this._detectConflicts("height_with_ar", widgets),
-            description: `HEIGHT ${h} with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`
+            description: `HEIGHT ${h} with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`,
+            activeSources: ['HEIGHT'] // Track enabled widgets
         };
     }
 
@@ -336,7 +342,8 @@ export class DimensionSourceManager {
             source: "widget_with_ar",
             ar: ar,
             conflicts: this._detectConflicts("mp_with_ar", widgets),
-            description: `MEGAPIXEL ${widgets.mp.value.value}MP with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`
+            description: `MEGAPIXEL ${widgets.mp.value.value}MP with AR ${ar.aspectW}:${ar.aspectH} (${ar.source})`,
+            activeSources: ['MEGAPIXEL'] // Track enabled widgets
         };
     }
 

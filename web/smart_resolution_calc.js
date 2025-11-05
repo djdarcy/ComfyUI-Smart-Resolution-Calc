@@ -1040,20 +1040,19 @@ class ScaleWidget {
 
     /**
      * Get simplified mode label for tooltip (shows sources, not values)
-     * Extracts key sources from description for concise display
-     * @param {string} mode - Mode identifier (e.g., "height_ar", "mp_width_explicit")
-     * @param {string} description - Full description from DimensionSourceManager
-     * @returns {string} Simplified label (e.g., "HEIGHT & custom_ratio")
+     * Uses activeSources array from DimensionSourceManager for accurate widget detection (Bug 2 fix)
+     * @param {Object} dimSource - Complete dimension source object from DimensionSourceManager
+     * @param {string} dimSource.mode - Mode identifier (e.g., "height_ar", "mp_width_explicit")
+     * @param {string} dimSource.description - Full description text
+     * @param {string[]} [dimSource.activeSources] - Array of enabled dimension widgets (e.g., ['WIDTH', 'MEGAPIXEL'])
+     * @returns {string} Simplified label (e.g., "WIDTH & MEGAPIXEL")
      */
-    getSimplifiedModeLabel(mode, description) {
+    getSimplifiedModeLabel(dimSource) {
+        const { mode, description, activeSources } = dimSource;
+
         // Check for special modes first
         if (description.includes('Exact Dims') || description.includes('exact image')) {
             return 'Image Exact Dims';
-        }
-
-        // Check for WIDTH+HEIGHT explicit (Priority 3)
-        if (description.includes('Explicit dimensions')) {
-            return 'WIDTH & HEIGHT';
         }
 
         // Check for AR Only mode (Priority 4)
@@ -1063,14 +1062,35 @@ class ScaleWidget {
             return `${dimensionSource} & USE IMAGE DIMS AR Only`;
         }
 
-        // Extract active sources from description
+        // Use activeSources array if available (Bug 2 fix - avoids string parsing issues)
+        if (activeSources && activeSources.length > 0) {
+            const sources = [...activeSources];
+
+            // Check for AR sources (fallback to string parsing for AR since not in activeSources)
+            if (description.includes('custom_ratio') || description.includes('Custom')) {
+                sources.push('custom_ratio');
+            } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
+                sources.push('image_ar');
+            } else if (description.includes('dropdown') || description.includes('Dropdown')) {
+                sources.push('dropdown_ar');
+            }
+
+            // Check for defaults
+            if (description.includes('Default') || description.includes('default')) {
+                sources.push('defaults');
+            }
+
+            return sources.join(' & ');
+        }
+
+        // Fallback: Extract active sources from description (backward compatibility)
         const sources = [];
 
-        // Check for dimension widgets
+        // Check for dimension widgets (removed 'H computed' check - Bug 2 fix)
         if (description.includes('WIDTH') || description.includes('W:') || description.includes('W+')) {
             sources.push('WIDTH');
         }
-        if (description.includes('HEIGHT') || description.includes('H:') || description.includes('H+') || description.includes('H computed')) {
+        if (description.includes('HEIGHT') || description.includes('H:') || description.includes('H+')) {
             sources.push('HEIGHT');
         }
         if (description.includes('MP') || description.includes('megapixel')) {
@@ -1123,7 +1143,7 @@ class ScaleWidget {
 
         // Add simplified mode label (shows sources, not values)
         if (preview.mode) {
-            const modeLabel = this.getSimplifiedModeLabel(preview.mode, preview.description);
+            const modeLabel = this.getSimplifiedModeLabel(preview);
             if (modeLabel) {
                 lines.push(`Mode: ${modeLabel}`);
             }
@@ -2989,7 +3009,7 @@ app.registerExtension({
                         if (dimSource) {
                             const scaleWidget = this.widgets.find(w => w.name === "scale" && w.type === "custom");
                             if (scaleWidget && scaleWidget.getSimplifiedModeLabel) {
-                                const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource.mode, dimSource.description);
+                                const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource);
                                 if (modeLabel) {
                                     // Update native ComfyUI widget value (not custom widget)
                                     modeWidget.value = modeLabel;
