@@ -5,6 +5,79 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-11-04
+
+### Changed
+- **SCALE Tooltip Refactor** (Issue #23): Replace manual dimension logic with DimensionSourceManager API
+  - `ScaleWidget.calculatePreview()` now uses manager instead of 200+ lines of manual calculation
+  - **Code reduction**: -162 lines (-76%) in `calculatePreview()` method
+  - **Enhanced tooltip**: Now displays simplified mode label showing active sources
+  - **Simplified Mode display**: Shows "HEIGHT & custom_ratio" instead of verbose descriptions with values
+  - **Conflict warnings**: Tooltip shows conflicts in orange with detailed messages when detected
+  - **Visual indicators**: Border color changes to orange when conflicts present
+  - All 6 priority levels now visible to users via tooltip hover
+  - Manager calculations finally exposed in UI (completes v0.4.2 integration)
+
+### Technical
+- **ScaleWidget changes**:
+  - `calculatePreview()`: Reduced from 213 lines to 51 lines (replaces manual logic with `dimensionSourceManager.getActiveDimensionSource()`)
+  - `drawTooltip()`: Enhanced to display mode, conflicts, and formatted conflict messages (+46 lines)
+  - Tooltip dynamically adjusts height based on conflict count
+  - Message wrapping for long conflict descriptions (60 char limit)
+  - Color coding: Green (no conflicts), Orange (conflicts present)
+
+### Benefits
+- **Single source of truth**: Tooltip now shows exact same calculations that backend will use
+- **User visibility**: Users can now see which dimension source mode is active
+- **Debugging aid**: Conflict warnings help users understand widget interactions
+- **Maintainability**: Future dimension logic changes only need to happen in manager
+- **Consistency**: Eliminates risk of tooltip showing different calculations than actual node output
+
+### Known Issues (to fix in v0.4.4)
+- **Mode line missing for WIDTH+HEIGHT**: Mode line doesn't appear when both WIDTH and HEIGHT enabled
+- **USE IMAGE DIMS = AR Only broken**: Uses dropdown AR instead of image AR when HEIGHT/WIDTH enabled
+  - Example: Image 1024×1024 (1:1) + HEIGHT 640 should give 640×640, but gives 866×1155 (using dropdown 3:4 AR)
+  - Root cause: DimensionSourceManager lacks access to ScaleWidget's imageDimensionsCache
+  - Previous calculatePreview() had direct cache access - refactor broke this integration
+- **Incorrect mode reporting**: Shows "MEGAPIXEL & dropdown_ar" instead of "HEIGHT & image_ar"
+
+### Notes
+- **Testing needed**: Manual verification that all 6 priority modes display correctly in tooltip
+- **Python parity pending**: Backend needs matching implementation (Issue #19)
+- **Integration fix needed**: Pass imageDimensionsCache to manager for proper image AR handling (v0.4.4)
+- **Future improvements** (Issue #20 - Conflict Detection UI):
+  - Per-widget conflict tooltips (show warnings at the problem widget, not just in SCALE)
+  - Severity levels for conflicts (info/warning/error) to differentiate expected overrides from genuine ambiguity
+  - Better discoverability - users shouldn't need to hover SCALE to see conflicts
+- **Next steps**: Fix integration issues (v0.4.4), Python backend parity (v0.4.5), enhanced conflict UI (v0.5.x)
+
+## [0.4.2] - 2025-11-04
+
+### Added
+- **Widget Integration** (Issue #22): Connect DimensionSourceManager to node lifecycle
+  - Added `dimensionSourceManager` instance to node (activated on node creation)
+  - **All priority modes now functional**: Exact Dims, MP+W+H scalar, explicit dimensions (W+H, MP+W, MP+H), AR Only, single dimension, defaults
+  - Hooked all dimension widget callbacks (`dimension_width`, `dimension_height`, `dimension_megapixel`, `image_mode`)
+  - Hooked native widget callbacks (`custom_ratio`, `custom_aspect_ratio`, `aspect_ratio`)
+  - Hooked image load/change events to invalidate cache
+  - Cache automatically invalidates when any dimension-affecting widget changes
+  - Manager now actively calculates dimensions (though not yet exposed in UI)
+  - **Effectively completes Issues #17 (MP+WIDTH) and #18 (MP+HEIGHT)** - code was already in manager, now activated
+
+### Technical
+- **Integration points** (~73 lines added):
+  - Node initialization: `this.dimensionSourceManager = new DimensionSourceManager(this)`
+  - DimensionWidget: Toggle, increment, decrement, value edit callbacks
+  - ImageModeWidget: Toggle and mode selector callbacks
+  - ScaleWidget: Image dimension fetch (server + info parsing paths)
+  - Native widgets: Wrapped existing callbacks with cache invalidation
+
+### Notes
+- **Testing needed**: Manual verification that all widget changes trigger cache invalidation
+- **Not yet exposed in UI**: Manager calculates dimensions but UI doesn't display them yet (Issue #23: SCALE tooltip refactor pending)
+- **Python parity pending**: Backend needs matching implementation (Issue #19)
+- **Next steps**: SCALE tooltip refactor (v0.4.3), conflict warnings (v0.4.4), Python parity (v0.4.5)
+
 ## [0.4.1] - 2025-11-04
 
 ### Changed

@@ -774,191 +774,24 @@ class ScaleWidget {
 
     /**
      * Calculate preview dimensions for tooltip
+     * Uses DimensionSourceManager for centralized dimension calculation
      */
     calculatePreview(node) {
-        // Check if we should fetch image dimensions (if USE_IMAGE enabled but cache empty)
-        const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
-        const useImage = imageModeWidget?.value?.on;
-
-        if (useImage && !this.imageDimensionsCache && !this.fetchingDimensions) {
-            // Trigger async fetch (won't block, but will populate cache for next time)
-            logger.verbose('Scale preview: cache empty, triggering dimension fetch');
-            this.refreshImageDimensions(node);
-        }
-
-        // Get current dimension values from the node's other widgets
-        const mpWidget = node.widgets.find(w => w.name === "dimension_megapixel");
-        const widthWidget = node.widgets.find(w => w.name === "dimension_width");
-        const heightWidget = node.widgets.find(w => w.name === "dimension_height");
-        const aspectRatioWidget = node.widgets.find(w => w.name === "aspect_ratio");
-
-        if (!mpWidget || !widthWidget || !heightWidget) {
+        // Get dimension source from manager (handles all 6 priority levels)
+        if (!node.dimensionSourceManager) {
+            logger.warn('[ScaleWidget] DimensionSourceManager not initialized');
             return null;
         }
 
-        // Check for custom ratio first (takes precedence over dropdown)
-        const customRatioToggle = node.widgets.find(w => w.name === "custom_ratio");
-        const customRatioText = node.widgets.find(w => w.name === "custom_aspect_ratio");
-
-        let aspectW = 16, aspectH = 9;
-        let aspectRatio;
-
-        if (customRatioToggle && customRatioToggle.value && customRatioText && customRatioText.value) {
-            // Custom ratio enabled - parse custom_aspect_ratio (supports floats like "2.39:1")
-            const customMatch = customRatioText.value.match(/([\d.]+):([\d.]+)/);
-            if (customMatch) {
-                aspectW = parseFloat(customMatch[1]);
-                aspectH = parseFloat(customMatch[2]);
-                aspectRatio = aspectW / aspectH;
-                logger.debug(`[ScaleWidget] Using custom aspect ratio: ${aspectW}:${aspectH} = ${aspectRatio.toFixed(3)}`);
-            } else {
-                // Invalid custom ratio - fall back to dropdown
-                logger.debug(`[ScaleWidget] Invalid custom ratio "${customRatioText.value}", falling back to dropdown`);
-                const match = aspectRatioWidget?.value?.match(/(\d+):(\d+)/);
-                if (match) {
-                    aspectW = parseInt(match[1]);
-                    aspectH = parseInt(match[2]);
-                }
-                aspectRatio = aspectW / aspectH;
-            }
-        } else {
-            // Custom ratio not enabled - use dropdown aspect ratio
-            if (aspectRatioWidget && aspectRatioWidget.value) {
-                const match = aspectRatioWidget.value.match(/(\d+):(\d+)/);
-                if (match) {
-                    aspectW = parseInt(match[1]);
-                    aspectH = parseInt(match[2]);
-                }
-            }
-            aspectRatio = aspectW / aspectH;
+        const dimSource = node.dimensionSourceManager.getActiveDimensionSource();
+        if (!dimSource) {
+            logger.warn('[ScaleWidget] DimensionSourceManager returned null');
+            return null;
         }
 
-        // Determine calculation mode and base dimensions
-        let baseW, baseH, baseMp;
-        const useMp = mpWidget.value.on;
-        const useWidth = widthWidget.value.on;
-        const useHeight = heightWidget.value.on;
-
-        // Check if we should use cached image dimensions
-        const imageModeWidgetForCache = node.widgets?.find(w => w.name === "image_mode");
-        const useImageForCache = imageModeWidgetForCache?.value?.on;
-        const imageMode = imageModeWidgetForCache?.value?.value; // 0=AR Only, 1=Exact Dims
-
-        logger.verbose(`[ScaleWidget] calculatePreview: USE_IMAGE=${useImageForCache}, mode=${imageMode === 0 ? 'AR Only' : imageMode === 1 ? 'Exact Dims' : 'unknown'}, cache=${this.imageDimensionsCache ? 'populated' : 'empty'}`);
-
-        if (useImageForCache && this.imageDimensionsCache) {
-            if (imageMode === 1) {
-                // Exact Dims mode - use raw image dimensions (ignore all user settings)
-                baseW = this.imageDimensionsCache.width;
-                baseH = this.imageDimensionsCache.height;
-
-                // Update aspectW/aspectH for tooltip display (reduce to simplest form)
-                const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
-                const divisor = gcd(this.imageDimensionsCache.width, this.imageDimensionsCache.height);
-                aspectW = this.imageDimensionsCache.width / divisor;
-                aspectH = this.imageDimensionsCache.height / divisor;
-
-                logger.info(`✓ Scale preview using exact image dimensions: ${baseW}×${baseH}`);
-            } else {
-                // AR Only mode (imageMode === 0) - extract AR and use with user's dimension settings
-                const imageAR = this.imageDimensionsCache.width / this.imageDimensionsCache.height;
-
-                // Validate AR before use
-                if (isNaN(imageAR) || !isFinite(imageAR) || imageAR <= 0) {
-                    logger.debug(`[ScaleWidget] Invalid image AR (${imageAR}), falling back to widget calculation`);
-                    // Clear cache temporarily to trigger fallback
-                    const savedCache = this.imageDimensionsCache;
-                    this.imageDimensionsCache = null;
-                    // Will fall through to widget-based calculation below
-                    // Restore cache after (for next time)
-                    setTimeout(() => { this.imageDimensionsCache = savedCache; }, 0);
-                } else {
-                    // Use image AR with user's dimension settings
-                    logger.debug(`[ScaleWidget] AR Only mode - using image AR: ${imageAR.toFixed(3)}`);
-
-                    // Update aspectW/aspectH for tooltip display (reduce to simplest form)
-                    const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
-                    const divisor = gcd(this.imageDimensionsCache.width, this.imageDimensionsCache.height);
-                    aspectW = this.imageDimensionsCache.width / divisor;
-                    aspectH = this.imageDimensionsCache.height / divisor;
-
-                    if (useWidth && useHeight) {
-                        // Both W+H specified - use as-is (ignore AR)
-                        baseW = widthWidget.value.value;
-                        baseH = heightWidget.value.value;
-
-                        // Update aspectW/aspectH for tooltip display (reduce to simplest form)
-                        const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
-                        const divisor = gcd(baseW, baseH);
-                        aspectW = baseW / divisor;
-                        aspectH = baseH / divisor;
-
-                        logger.verbose(`[ScaleWidget] Using user WIDTH+HEIGHT: ${baseW}×${baseH}`);
-                    } else if (useWidth) {
-                        // Width specified - calculate height from image AR
-                        baseW = widthWidget.value.value;
-                        baseH = Math.round(baseW / imageAR);
-                        logger.verbose(`[ScaleWidget] Computed HEIGHT from WIDTH ${baseW} ÷ AR ${imageAR.toFixed(3)} = ${baseH}`);
-                    } else if (useHeight) {
-                        // Height specified - calculate width from image AR
-                        baseH = heightWidget.value.value;
-                        baseW = Math.round(baseH * imageAR);
-                        logger.verbose(`[ScaleWidget] Computed WIDTH from HEIGHT ${baseH} × AR ${imageAR.toFixed(3)} = ${baseW}`);
-                    } else if (useMp) {
-                        // Megapixel mode - calculate from MP and image AR
-                        const targetMp = mpWidget.value.value * 1_000_000;
-                        baseH = Math.sqrt(targetMp / imageAR);
-                        baseW = baseH * imageAR;
-                        logger.verbose(`[ScaleWidget] Computed from MP ${mpWidget.value.value} and AR ${imageAR.toFixed(3)}: ${Math.round(baseW)}×${Math.round(baseH)}`);
-                    } else {
-                        // No settings enabled - use raw image dimensions as fallback
-                        baseW = this.imageDimensionsCache.width;
-                        baseH = this.imageDimensionsCache.height;
-                        logger.verbose(`[ScaleWidget] No dimension settings, using raw image dimensions: ${baseW}×${baseH}`);
-                    }
-
-                    logger.info(`✓ Scale preview using image AR (${imageAR.toFixed(2)}) with user settings: ${Math.round(baseW)}×${Math.round(baseH)}`);
-                }
-            }
-        }
-
-        if (!useImageForCache || !this.imageDimensionsCache) {
-            // Widget-based calculation (fallback when no image or cache empty)
-            if (useImageForCache && !this.imageDimensionsCache) {
-                logger.debug(`[ScaleWidget] Cache empty, falling back to widget-based calculation`);
-            }
-            // Calculate base dimensions with proper aspect ratio handling (existing logic)
-            if (useWidth && useHeight) {
-                // Both W+H specified - use as-is
-                baseW = widthWidget.value.value;
-                baseH = heightWidget.value.value;
-
-                // Update aspectW/aspectH for tooltip display (reduce to simplest form)
-                const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
-                const divisor = gcd(baseW, baseH);
-                aspectW = baseW / divisor;
-                aspectH = baseH / divisor;
-            } else if (useWidth) {
-                // Width specified - calculate height from aspect ratio
-                baseW = widthWidget.value.value;
-                baseH = Math.round(baseW / aspectRatio);
-            } else if (useHeight) {
-                // Height specified - calculate width from aspect ratio
-                baseH = heightWidget.value.value;
-                baseW = Math.round(baseH * aspectRatio);
-            } else if (useMp) {
-                // Megapixel mode - calculate dimensions from MP and aspect ratio
-                const targetMp = mpWidget.value.value * 1_000_000;
-                baseH = Math.sqrt(targetMp / aspectRatio);
-                baseW = baseH * aspectRatio;
-            } else {
-                // Default mode - use 1920x1080
-                baseW = 1920;
-                baseH = 1080;
-            }
-        }
-
-        baseMp = (baseW * baseH) / 1_000_000;
+        const baseW = dimSource.baseW;
+        const baseH = dimSource.baseH;
+        const baseMp = (baseW * baseH) / 1_000_000;
 
         // Apply scale
         const scaledW = Math.round(baseW * this.value);
@@ -981,7 +814,13 @@ class ScaleWidget {
             scaledW, scaledH,
             finalW, finalH, finalMp,
             divisor,
-            aspectW, aspectH  // Include AR for tooltip display
+            aspectW: dimSource.ar.aspectW,
+            aspectH: dimSource.ar.aspectH,
+            // Include dimension source metadata for enhanced tooltip
+            mode: dimSource.mode,
+            priority: dimSource.priority,
+            description: dimSource.description,
+            conflicts: dimSource.conflicts
         };
     }
 
@@ -1045,6 +884,10 @@ class ScaleWidget {
                         path: filePath
                     };
                     logger.info(`✓ Cached image dimensions from server: ${dims.width}×${dims.height}`);
+
+                    // Invalidate dimension source cache when image dimensions change
+                    node.dimensionSourceManager?.invalidateCache();
+
                     node.setDirtyCanvas(true, true);
                     return;
                 }
@@ -1064,6 +907,10 @@ class ScaleWidget {
                     path: filePath
                 };
                 logger.debug(`✓ Cached image dimensions from info: ${cachedDims.width}×${cachedDims.height}`);
+
+                // Invalidate dimension source cache when image dimensions change
+                node.dimensionSourceManager?.invalidateCache();
+
                 node.setDirtyCanvas(true, true);
                 return;
             }
@@ -1221,7 +1068,60 @@ class ScaleWidget {
     }
 
     /**
+     * Get simplified mode label for tooltip (shows sources, not values)
+     * Extracts key sources from description for concise display
+     * @param {string} mode - Mode identifier (e.g., "height_ar", "mp_width_explicit")
+     * @param {string} description - Full description from DimensionSourceManager
+     * @returns {string} Simplified label (e.g., "HEIGHT & custom_ratio")
+     */
+    getSimplifiedModeLabel(mode, description) {
+        // Extract active sources from description (more reliable than parsing mode)
+        const sources = [];
+
+        // Check for dimension widgets
+        if (description.includes('WIDTH') || description.includes('W:') || description.includes('W+')) {
+            sources.push('WIDTH');
+        }
+        if (description.includes('HEIGHT') || description.includes('H:') || description.includes('H+') || description.includes('H computed')) {
+            sources.push('HEIGHT');
+        }
+        if (description.includes('MP') || description.includes('megapixel')) {
+            sources.push('MEGAPIXEL');
+        }
+
+        // Check for AR sources
+        if (description.includes('custom_ratio') || description.includes('Custom')) {
+            sources.push('custom_ratio');
+        } else if (description.includes('image AR') || description.includes('Image AR')) {
+            sources.push('image_ar');
+        } else if (description.includes('dropdown') || description.includes('Dropdown')) {
+            sources.push('dropdown_ar');
+        }
+
+        // Check for image modes
+        if (description.includes('Exact Dims') || description.includes('exact image')) {
+            return 'Image Exact Dims';
+        }
+        if (description.includes('AR Only') && description.includes('image')) {
+            sources.push('image_ar_only');
+        }
+
+        // Check for defaults
+        if (description.includes('Default') || description.includes('default')) {
+            sources.push('defaults');
+        }
+
+        // Build label
+        if (sources.length === 0) {
+            return null; // No clear sources identified
+        }
+
+        return sources.join(' & ');
+    }
+
+    /**
      * Draw preview tooltip below the widget
+     * Shows dimension source mode, calculations, and conflicts
      */
     drawTooltip(ctx, startY, width, preview) {
         const margin = 15;
@@ -1235,15 +1135,51 @@ class ScaleWidget {
             ? `${preview.aspectW}:${preview.aspectH}`
             : 'unknown';
 
-        // Tooltip content
+        // Build tooltip content
         const lines = [
             `Scale: ${this.value.toFixed(2)}x`,
-            `━━━━━━━━━━━━━━━━━━━━━━━━`,
-            `Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`,
-            `  ↓`,
-            `Scaled: ${preview.scaledW} × ${preview.scaledH}`,
-            `After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`
+            `━━━━━━━━━━━━━━━━━━━━━━━━`
         ];
+
+        // Add simplified mode label (shows sources, not values)
+        if (preview.mode) {
+            const modeLabel = this.getSimplifiedModeLabel(preview.mode, preview.description);
+            if (modeLabel) {
+                lines.push(`Mode: ${modeLabel}`);
+            }
+        }
+
+        // Add dimension calculations
+        lines.push(`Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`);
+        lines.push(`  ↓`);
+        lines.push(`Scaled: ${preview.scaledW} × ${preview.scaledH}`);
+        lines.push(`After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`);
+
+        // Add conflict warnings if any
+        if (preview.conflicts && preview.conflicts.length > 0) {
+            lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━`);
+            lines.push(`⚠️  Conflicts detected:`);
+            preview.conflicts.forEach(conflict => {
+                // Wrap long conflict messages (split at ~60 chars)
+                const msg = conflict.message || conflict;
+                if (msg.length > 60) {
+                    // Split on word boundaries
+                    const words = msg.split(' ');
+                    let currentLine = '';
+                    words.forEach(word => {
+                        if ((currentLine + word).length > 58) {
+                            if (currentLine) lines.push(`  ${currentLine.trim()}`);
+                            currentLine = word + ' ';
+                        } else {
+                            currentLine += word + ' ';
+                        }
+                    });
+                    if (currentLine) lines.push(`  ${currentLine.trim()}`);
+                } else {
+                    lines.push(`  ${msg}`);
+                }
+            });
+        }
 
         // Measure text width to ensure tooltip background fits all content
         ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
@@ -1265,8 +1201,8 @@ class ScaleWidget {
         ctx.roundRect(margin, startY + 4, tooltipWidth, tooltipHeight, 4);
         ctx.fill();
 
-        // Draw tooltip border
-        ctx.strokeStyle = "#4CAF50";
+        // Draw tooltip border (change to orange if conflicts present)
+        ctx.strokeStyle = (preview.conflicts && preview.conflicts.length > 0) ? "#ff9800" : "#4CAF50";
         ctx.lineWidth = 1;
         ctx.stroke();
 
@@ -1285,9 +1221,21 @@ class ScaleWidget {
                 ctx.fillText(line, margin + padding, textY);
                 ctx.font = "11px monospace";
                 ctx.fillStyle = "#ffffff";
-            } else if (index === 1) {
+            } else if (line.startsWith('━')) {
                 // Separator line
                 ctx.fillStyle = "#666666";
+                ctx.fillText(line, margin + padding, textY);
+                ctx.fillStyle = "#ffffff";
+            } else if (line.startsWith('⚠️')) {
+                // Conflict header - highlight in orange
+                ctx.fillStyle = "#ff9800";
+                ctx.font = "bold 11px monospace";
+                ctx.fillText(line, margin + padding, textY);
+                ctx.font = "11px monospace";
+                ctx.fillStyle = "#ffffff";
+            } else if (line.startsWith('  ') && preview.conflicts && preview.conflicts.length > 0) {
+                // Conflict message - show in lighter orange
+                ctx.fillStyle = "#ffb74d";
                 ctx.fillText(line, margin + padding, textY);
                 ctx.fillStyle = "#ffffff";
             } else {
@@ -1871,6 +1819,10 @@ class DimensionWidget {
                 const oldState = this.value.on;
                 this.value.on = !this.value.on;
                 logger.debug(`Toggle clicked: ${this.name} - ${oldState} → ${this.value.on}`);
+
+                // Invalidate dimension source cache when toggle changes
+                node.dimensionSourceManager?.invalidateCache();
+
                 node.setDirtyCanvas(true);
                 return true;
             }
@@ -1885,6 +1837,10 @@ class DimensionWidget {
                 // Decrement button
                 if (this.isInBounds(pos, this.hitAreas.valueDec)) {
                     this.changeValue(-1, node);
+
+                    // Invalidate dimension source cache when value changes
+                    node.dimensionSourceManager?.invalidateCache();
+
                     node.setDirtyCanvas(true);
                     return true;
                 }
@@ -1892,6 +1848,10 @@ class DimensionWidget {
                 // Increment button
                 if (this.isInBounds(pos, this.hitAreas.valueInc)) {
                     this.changeValue(1, node);
+
+                    // Invalidate dimension source cache when value changes
+                    node.dimensionSourceManager?.invalidateCache();
+
                     node.setDirtyCanvas(true);
                     return true;
                 }
@@ -1903,6 +1863,10 @@ class DimensionWidget {
                         const parsed = parseFloat(newValue);
                         if (!isNaN(parsed)) {
                             this.value.value = this.isInteger ? Math.round(parsed) : parsed;
+
+                            // Invalidate dimension source cache when value changes
+                            node.dimensionSourceManager?.invalidateCache();
+
                             node.setDirtyCanvas(true);
                         }
                     }, event);
@@ -2163,6 +2127,9 @@ class ImageModeWidget {
                 this.value.on = newState;
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
+                // Invalidate dimension source cache when USE_IMAGE toggle changes
+                node.dimensionSourceManager?.invalidateCache();
+
                 // Trigger scale dimension refresh when USE_IMAGE is toggled
                 const scaleWidget = node.widgets?.find(w => w.name === "scale");
                 if (scaleWidget?.refreshImageDimensions) {
@@ -2192,6 +2159,10 @@ class ImageModeWidget {
             if (allowModeEdit && this.isInBounds(pos, this.hitAreas.modeSelector)) {
                 this.value.value = this.value.value === 0 ? 1 : 0;
                 logger.debug(`Image mode changed to: ${this.modes[this.value.value]}`);
+
+                // Invalidate dimension source cache when mode changes (AR Only ↔ Exact Dims)
+                node.dimensionSourceManager?.invalidateCache();
+
                 node.setDirtyCanvas(true);
                 return true;
             }
@@ -2834,6 +2805,10 @@ app.registerExtension({
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
 
+                // Initialize DimensionSourceManager for centralized dimension calculation
+                this.dimensionSourceManager = new DimensionSourceManager(this);
+                logger.debug('Initialized DimensionSourceManager');
+
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
                 if (defaultScaleWidget) {
@@ -2870,6 +2845,44 @@ app.registerExtension({
                     logger.debug('Added tooltip to aspect_ratio widget, type:', aspectRatioWidget.type);
                 } else {
                     logger.debug('aspect_ratio widget not found');
+                }
+
+                // Hook native widget callbacks to invalidate dimension source cache
+                const customRatioWidget = this.widgets.find(w => w.name === "custom_ratio");
+                if (customRatioWidget) {
+                    const originalCallback = customRatioWidget.callback;
+                    customRatioWidget.callback = (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(customRatioWidget, value);
+                        }
+                        // Invalidate cache when custom_ratio toggle changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        logger.debug('custom_ratio changed, cache invalidated');
+                    };
+                }
+
+                if (customAspectRatioWidget) {
+                    const originalCallback = customAspectRatioWidget.callback;
+                    customAspectRatioWidget.callback = (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(customAspectRatioWidget, value);
+                        }
+                        // Invalidate cache when custom_aspect_ratio text changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        logger.debug('custom_aspect_ratio changed, cache invalidated');
+                    };
+                }
+
+                if (aspectRatioWidget) {
+                    const originalCallback = aspectRatioWidget.callback;
+                    aspectRatioWidget.callback = (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(aspectRatioWidget, value);
+                        }
+                        // Invalidate cache when aspect_ratio dropdown changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        logger.debug('aspect_ratio changed, cache invalidated');
+                    };
                 }
 
                 // Set up hit areas for native widgets after they're drawn
