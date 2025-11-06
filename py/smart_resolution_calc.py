@@ -395,6 +395,15 @@ class SmartResolutionCalc:
         logger.debug(f"Parsed: w_ratio={w_ratio}, h_ratio={h_ratio}, divisor={divisor}")
 
         # Calculate based on active toggles (priority order)
+        # Priority system (matches JavaScript DimensionSourceManager):
+        # 1. Image Exact Dims (handled above at line 319)
+        # 2. WIDTH + HEIGHT
+        # 3. WIDTH + MEGAPIXEL
+        # 4. HEIGHT + MEGAPIXEL
+        # 5. WIDTH + Aspect Ratio
+        # 6. HEIGHT + Aspect Ratio
+        # 7. MEGAPIXEL + Aspect Ratio
+        # 8. Default (1.0 MP + Aspect Ratio)
         if use_width and use_height:
             # Both dimensions specified - calculate megapixels, actual aspect may differ
             w = width_val
@@ -406,8 +415,34 @@ class SmartResolutionCalc:
             info_detail_base = f"Base W: {w} × H: {h}"
             logger.debug(f"Mode: Width + Height - width={width_val}, height={height_val}, actual AR={actual_ar}")
 
+        elif use_width and use_mp:
+            # Priority 3: Width + Megapixels → calculate height from megapixel constraint
+            w = width_val
+            total_pixels = megapixel_val * 1_000_000
+            if w > 0:
+                h = round(total_pixels / w)
+            else:
+                h = 1080  # Fallback for invalid width
+                logger.warning("Invalid width (0 or negative) in WIDTH+MP mode, using fallback H=1080")
+            mode = "Width + Megapixels"
+            info_detail_base = f"Calculated H: {h} from {megapixel_val}MP"
+            logger.debug(f"Mode: {mode} - width={width_val}, mp={megapixel_val} → h={h}")
+
+        elif use_height and use_mp:
+            # Priority 4: Height + Megapixels → calculate width from megapixel constraint
+            h = height_val
+            total_pixels = megapixel_val * 1_000_000
+            if h > 0:
+                w = round(total_pixels / h)
+            else:
+                w = 1920  # Fallback for invalid height
+                logger.warning("Invalid height (0 or negative) in HEIGHT+MP mode, using fallback W=1920")
+            mode = "Height + Megapixels"
+            info_detail_base = f"Calculated W: {w} from {megapixel_val}MP"
+            logger.debug(f"Mode: {mode} - height={height_val}, mp={megapixel_val} → w={w}")
+
         elif use_width:
-            # Width + aspect ratio → calculate height
+            # Priority 5: Width + Aspect Ratio → calculate height (no MP constraint)
             w = width_val
             h = int(width_val * h_ratio / w_ratio)
             mode = "Width + Aspect Ratio"
@@ -415,7 +450,7 @@ class SmartResolutionCalc:
             logger.debug(f"Mode: {mode} - width={width_val}, calculated h={h}")
 
         elif use_height:
-            # Height + aspect ratio → calculate width
+            # Priority 6: Height + Aspect Ratio → calculate width (no MP constraint)
             w = int(height_val * w_ratio / h_ratio)
             h = height_val
             mode = "Height + Aspect Ratio"
@@ -423,7 +458,7 @@ class SmartResolutionCalc:
             logger.debug(f"Mode: {mode} - height={height_val}, calculated w={w}")
 
         elif use_mp:
-            # Megapixels + aspect ratio → calculate both dimensions
+            # Priority 7: Megapixels + Aspect Ratio → calculate both dimensions
             total_pixels = megapixel_val * 1_000_000
             dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
             w = int(dimension * w_ratio)
@@ -433,7 +468,7 @@ class SmartResolutionCalc:
             logger.debug(f"Mode: {mode} - mp={megapixel_val} → w={w}, h={h}")
 
         else:
-            # No inputs active - use default (1.0 MP at aspect ratio)
+            # Priority 8: Default - no inputs active, use 1.0 MP at aspect ratio
             total_pixels = 1.0 * 1_000_000
             dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
             w = int(dimension * w_ratio)
