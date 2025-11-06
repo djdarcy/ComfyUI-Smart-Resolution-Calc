@@ -721,6 +721,70 @@ class SmartResolutionCalc:
                 'error': str(e)
             }
 
+    @staticmethod
+    def calculate_dimensions_api(widgets, runtime_context=None):
+        """
+        API endpoint method for dimension calculation.
+
+        This is the single source of truth for dimension calculations.
+        JavaScript calls this via /smart-resolution/calculate-dimensions endpoint.
+
+        Args:
+            widgets (dict): Widget state from JavaScript
+                {
+                    "width_enabled": bool,
+                    "width_value": int,
+                    "height_enabled": bool,
+                    "height_value": int,
+                    "mp_enabled": bool,
+                    "mp_value": float,
+                    "image_mode_enabled": bool,
+                    "image_mode_value": int,  # 0=AR Only, 1=Exact Dims
+                    "custom_ratio_enabled": bool,
+                    "custom_aspect_ratio": str,
+                    "aspect_ratio_dropdown": str
+                }
+            runtime_context (dict): Optional runtime data
+                {
+                    "image_info": {"width": int, "height": int}
+                }
+
+        Returns:
+            dict: Calculation result
+                {
+                    "mode": str,
+                    "priority": int,
+                    "baseW": int,
+                    "baseH": int,
+                    "source": str,
+                    "ar": {"ratio": float, "aspectW": int, "aspectH": int, "source": str},
+                    "conflicts": list,
+                    "description": str,
+                    "activeSources": list,
+                    "success": bool
+                }
+        """
+        try:
+            # Create calculator instance
+            calculator = DimensionSourceCalculator()
+
+            # Call calculator
+            result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+            # Add success flag
+            result['success'] = True
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error calculating dimensions: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def __init__(self):
         self.device = comfy.model_management.intermediate_device()
 

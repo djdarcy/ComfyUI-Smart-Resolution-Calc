@@ -711,9 +711,9 @@ class ScaleWidget {
 
     /**
      * Calculate preview dimensions for tooltip
-     * Uses DimensionSourceManager for centralized dimension calculation
+     * Uses DimensionSourceManager for centralized dimension calculation (calls Python API)
      */
-    calculatePreview(node) {
+    async calculatePreview(node) {
         // Get dimension source from manager (handles all 6 priority levels)
         if (!node.dimensionSourceManager) {
             logger.warn('[ScaleWidget] DimensionSourceManager not initialized');
@@ -724,7 +724,7 @@ class ScaleWidget {
         // TEMPORARILY DISABLED: Debug logging (testing canvas corruption)
         dimensionLogger.debug('[CACHE] imageDimensionsCache:', this.imageDimensionsCache);
         dimensionLogger.debug('[CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
-        const dimSource = node.dimensionSourceManager.getActiveDimensionSource(false, {
+        const dimSource = await node.dimensionSourceManager.getActiveDimensionSource(false, {
             imageDimensionsCache: this.imageDimensionsCache
         });
         if (!dimSource) {
@@ -1020,10 +1020,26 @@ class ScaleWidget {
 
         // Draw tooltip when hovering or dragging (and not at 1.0)
         if ((this.isHovering || this.isDragging) && !isNeutral) {
-            const preview = this.calculatePreview(node);
-            if (preview) {
-                this.drawTooltip(ctx, y + height, width, preview);
+            // Start async calculation if not already in progress
+            if (!this.calculatingPreview) {
+                this.calculatingPreview = true;
+                this.calculatePreview(node).then(preview => {
+                    this.cachedPreview = preview;
+                    this.calculatingPreview = false;
+                    // Trigger redraw to show tooltip
+                    node.setDirtyCanvas(true, false);
+                }).catch(err => {
+                    logger.error('[ScaleWidget] Preview calculation failed:', err);
+                    this.calculatingPreview = false;
+                });
             }
+            // Draw cached preview if available
+            if (this.cachedPreview) {
+                this.drawTooltip(ctx, y + height, width, this.cachedPreview);
+            }
+        } else {
+            // Clear cache when not hovering
+            this.cachedPreview = null;
         }
 
         // Draw settings gear icon at far right
@@ -3012,14 +3028,15 @@ app.registerExtension({
                 this.setSize(this.computeSize());
 
                 // Helper function to update MODE widget with current dimension source
-                const updateModeWidget = () => {
+                const updateModeWidget = async () => {
                     const modeWidget = this.widgets.find(w => w.name === "mode_status");
                     if (modeWidget && this.dimensionSourceManager) {
                         // Get imageDimensionsCache from stored ScaleWidget reference
                         const imageDimensionsCache = this.scaleWidgetInstance?.imageDimensionsCache;
 
                         // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
-                        const dimSource = this.dimensionSourceManager.getActiveDimensionSource(false, {
+                        // Calls Python API for single source of truth
+                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(false, {
                             imageDimensionsCache: imageDimensionsCache
                         });
 
@@ -3073,40 +3090,40 @@ app.registerExtension({
                 const customRatioWidget = this.widgets.find(w => w.name === "custom_ratio");
                 if (customRatioWidget) {
                     const originalCallback = customRatioWidget.callback;
-                    customRatioWidget.callback = (value) => {
+                    customRatioWidget.callback = async (value) => {
                         if (originalCallback) {
                             originalCallback.call(customRatioWidget, value);
                         }
                         // Invalidate cache when custom_ratio toggle changes
                         this.dimensionSourceManager?.invalidateCache();
-                        updateModeWidget(); // Update MODE widget
-                        logger.debug('custom_ratio changed, cache invalidated');
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('custom_ratio changed, MODE widget updated');
                     };
                 }
 
                 if (customAspectRatioWidget) {
                     const originalCallback = customAspectRatioWidget.callback;
-                    customAspectRatioWidget.callback = (value) => {
+                    customAspectRatioWidget.callback = async (value) => {
                         if (originalCallback) {
                             originalCallback.call(customAspectRatioWidget, value);
                         }
                         // Invalidate cache when custom_aspect_ratio text changes
                         this.dimensionSourceManager?.invalidateCache();
-                        updateModeWidget(); // Update MODE widget
-                        logger.debug('custom_aspect_ratio changed, cache invalidated');
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('custom_aspect_ratio changed, MODE widget updated');
                     };
                 }
 
                 if (aspectRatioWidget) {
                     const originalCallback = aspectRatioWidget.callback;
-                    aspectRatioWidget.callback = (value) => {
+                    aspectRatioWidget.callback = async (value) => {
                         if (originalCallback) {
                             originalCallback.call(aspectRatioWidget, value);
                         }
                         // Invalidate cache when aspect_ratio dropdown changes
                         this.dimensionSourceManager?.invalidateCache();
-                        updateModeWidget(); // Update MODE widget
-                        logger.debug('aspect_ratio changed, cache invalidated');
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('aspect_ratio changed, MODE widget updated');
                     };
                 }
 
