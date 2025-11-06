@@ -9,10 +9,21 @@ Version: v0.4.13 testing
 """
 
 import sys
+import io
 from pathlib import Path
 
-# Add parent directory to path to import smart_resolution_calc
-sys.path.insert(0, str(Path(__file__).parent))
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# Add py directory to path to import smart_resolution_calc
+sys.path.insert(0, str(Path(__file__).parent.parent / "py"))
+
+# Add ComfyUI root to path for comfy module imports
+comfyui_root = Path("C:/code/ComfyUI_experiment")
+if comfyui_root.exists():
+    sys.path.insert(0, str(comfyui_root))
 
 from smart_resolution_calc import DimensionSourceCalculator
 
