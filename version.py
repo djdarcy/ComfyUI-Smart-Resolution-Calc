@@ -27,7 +27,7 @@ PHASE = None  # Options: None, "alpha", "beta", "rc1", "rc2", etc.
 # DO NOT EDIT THIS LINE MANUALLY
 # Note: Hash reflects the commit this version builds upon (HEAD at commit time)
 # The hash will be one commit behind after the commit is created (git limitation)
-__version__ = "0.4.12_dev_81-20251106-8cbf9ef"
+__version__ = "0.4.12_dev_82-20251106-980286c"
 
 
 def get_version():
