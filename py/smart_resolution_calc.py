@@ -486,18 +486,19 @@ class SmartResolutionCalc:
             logger.warning(f"Scale {scale}x exceeds recommended maximum (7x). This may cause out-of-memory errors.")
             print(f"[SmartResCalc] WARNING: Scale {scale}x is very high and may exceed GPU limits")
 
-        # Apply scale to base dimensions
-        w_scaled = int(w * scale)
-        h_scaled = int(h * scale)
+        # Apply scale to base dimensions (keep float precision for accurate divisibility rounding)
+        w_scaled = w * scale
+        h_scaled = h * scale
 
         # Warn if scaled dimensions exceed typical GPU limits
         if w_scaled > 16384 or h_scaled > 16384:
-            logger.warning(f"Scaled dimensions {w_scaled}×{h_scaled} exceed typical GPU texture limits (16384px)")
-            print(f"[SmartResCalc] WARNING: Dimensions {w_scaled}×{h_scaled} may exceed GPU limits")
+            logger.warning(f"Scaled dimensions {w_scaled:.1f}×{h_scaled:.1f} exceed typical GPU texture limits (16384px)")
+            print(f"[SmartResCalc] WARNING: Dimensions {int(w_scaled)}×{int(h_scaled)} may exceed GPU limits")
 
-        # Apply divisibility rounding
-        w = round(w_scaled / divisor) * divisor
-        h = round(h_scaled / divisor) * divisor
+        # Apply divisibility rounding (Python uses banker's rounding - rounds .5 to nearest even)
+        # This matches the behavior after fixing JavaScript tooltip to use banker's rounding
+        w = int(round(w_scaled / divisor) * divisor)
+        h = int(round(h_scaled / divisor) * divisor)
 
         # Recalculate megapixels after scaling and rounding
         mp = (w * h) / 1_000_000

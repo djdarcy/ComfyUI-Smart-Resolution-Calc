@@ -747,9 +747,21 @@ class ScaleWidget {
             divisor = divisibleWidget.value === "Exact" ? 1 : parseInt(divisibleWidget.value);
         }
 
-        // Apply divisibility
-        const finalW = Math.round(scaledW / divisor) * divisor;
-        const finalH = Math.round(scaledH / divisor) * divisor;
+        // Apply divisibility using banker's rounding (matches Python behavior)
+        // Banker's rounding: round .5 to nearest even number
+        // This ensures JavaScript tooltip matches Python execution output
+        const bankersRound = (n) => {
+            const rounded = Math.round(n);
+            const diff = Math.abs(n - Math.floor(n) - 0.5);
+            // If exactly .5, round to even
+            if (diff < 1e-10) {
+                return (rounded % 2 === 0) ? rounded : rounded - Math.sign(n);
+            }
+            return rounded;
+        };
+
+        const finalW = bankersRound(scaledW / divisor) * divisor;
+        const finalH = bankersRound(scaledH / divisor) * divisor;
         const finalMp = (finalW * finalH) / 1_000_000;
 
         return {
