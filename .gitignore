@@ -152,3 +152,6 @@ private/temp/
 test_runs/
 private/notes/
 .repokit.json
+
+# Performance tests (copied temporarily for testing, not distributed)
+web/tests/

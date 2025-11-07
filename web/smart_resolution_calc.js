@@ -923,8 +923,10 @@ class ScaleWidget {
 
         // Pass runtime context including image dimensions cache
         // TEMPORARILY DISABLED: Debug logging (testing canvas corruption)
-        dimensionLogger.debug('[CACHE] imageDimensionsCache:', this.imageDimensionsCache);
-        dimensionLogger.debug('[CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
+        if (dimensionLogger.debugEnabled) {
+            dimensionLogger.debug('[CACHE] imageDimensionsCache:', this.imageDimensionsCache);
+            dimensionLogger.debug('[CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
+        }
         const dimSource = await node.dimensionSourceManager.getActiveDimensionSource(false, {
             imageDimensionsCache: this.imageDimensionsCache
         });
@@ -3677,20 +3679,22 @@ app.registerExtension({
                 };
 
                 // Debug: Log initial widget references to verify correct widgets found
-                visibilityLogger.debug('[WidgetInit] Initial widget references:', {
-                    output_image_mode: {
-                        name: this.imageOutputWidgets.output_image_mode?.name,
-                        type: this.imageOutputWidgets.output_image_mode?.type,
-                        value: this.imageOutputWidgets.output_image_mode?.value,
-                        index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
-                    },
-                    fill_type: {
-                        name: this.imageOutputWidgets.fill_type?.name,
-                        type: this.imageOutputWidgets.fill_type?.type,
-                        value: this.imageOutputWidgets.fill_type?.value,
-                        index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
-                    }
-                });
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[WidgetInit] Initial widget references:', {
+                        output_image_mode: {
+                            name: this.imageOutputWidgets.output_image_mode?.name,
+                            type: this.imageOutputWidgets.output_image_mode?.type,
+                            value: this.imageOutputWidgets.output_image_mode?.value,
+                            index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
+                        },
+                        fill_type: {
+                            name: this.imageOutputWidgets.fill_type?.name,
+                            type: this.imageOutputWidgets.fill_type?.type,
+                            value: this.imageOutputWidgets.fill_type?.value,
+                            index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
+                        }
+                    });
+                }
 
                 // Store original widget types, indices, and default values for restore
                 this.imageOutputWidgetIndices = {};
@@ -3797,25 +3801,29 @@ app.registerExtension({
                             return;
                         }
 
-                        visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
-                        visibilityLogger.debug('[WidgetRestore] Widget references:', {
-                            output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
-                            fill_type: this.imageOutputWidgets.fill_type?.name,
-                            color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
-                        });
-                        visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
+                            visibilityLogger.debug('[WidgetRestore] Widget references:', {
+                                output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
+                                fill_type: this.imageOutputWidgets.fill_type?.name,
+                                color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
+                            });
+                            visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
+                        }
 
                         // Start inserting after batch_size
                         let currentIndex = batchSizeIndex + 1;
 
                         // 1. Insert output_image_mode first
                         const outputWidget = this.imageOutputWidgets.output_image_mode;
-                        visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
-                            name: outputWidget?.name,
-                            type: outputWidget?.type,
-                            value: outputWidget?.value,
-                            options: outputWidget?.options?.values
-                        });
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
+                                name: outputWidget?.name,
+                                type: outputWidget?.type,
+                                value: outputWidget?.value,
+                                options: outputWidget?.options?.values
+                            });
+                        }
                         if (outputWidget && this.widgets.indexOf(outputWidget) === -1) {
                             // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.output_image_mode;
@@ -3834,7 +3842,9 @@ app.registerExtension({
 
                             this.widgets.splice(currentIndex, 0, outputWidget);
                             outputWidget.type = outputWidget.origType || "combo";
-                            visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            }
                             currentIndex++; // Move insertion point forward
                         } else if (outputWidget) {
                             // Already visible, update currentIndex to point after it
@@ -3842,17 +3852,21 @@ app.registerExtension({
                             if (existingIndex >= currentIndex) {
                                 currentIndex = existingIndex + 1;
                             }
-                            visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                            }
                         }
 
                         // 2. Insert fill_type second
                         const fillTypeWidget = this.imageOutputWidgets.fill_type;
-                        visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
-                            name: fillTypeWidget?.name,
-                            type: fillTypeWidget?.type,
-                            value: fillTypeWidget?.value,
-                            options: fillTypeWidget?.options?.values
-                        });
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
+                                name: fillTypeWidget?.name,
+                                type: fillTypeWidget?.type,
+                                value: fillTypeWidget?.value,
+                                options: fillTypeWidget?.options?.values
+                            });
+                        }
                         if (fillTypeWidget && this.widgets.indexOf(fillTypeWidget) === -1) {
                             // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.fill_type;
@@ -3871,7 +3885,9 @@ app.registerExtension({
 
                             this.widgets.splice(currentIndex, 0, fillTypeWidget);
                             fillTypeWidget.type = fillTypeWidget.origType || "combo";
-                            visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            }
                             currentIndex++; // Move insertion point forward
                         } else if (fillTypeWidget) {
                             // Already visible, update currentIndex to point after it
@@ -3879,7 +3895,9 @@ app.registerExtension({
                             if (existingIndex >= currentIndex) {
                                 currentIndex = existingIndex + 1;
                             }
-                            visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                            }
                         }
 
                         // 3. fill_color should already be in array (invisible)
@@ -4084,7 +4102,9 @@ app.registerExtension({
                 }
 
                 // Log diagnostics
-                visibilityLogger.debug('[SERIALIZE] Widget array state:', serializationDiagnostics);
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[SERIALIZE] Widget array state:', serializationDiagnostics);
+                }
 
                 const data = onSerialize ? onSerialize.apply(this) : {};
 
@@ -4098,7 +4118,9 @@ app.registerExtension({
                     });
                 }
                 data.widgets_values_by_name = widgetsByName;
-                visibilityLogger.debug('[SERIALIZE] Saved widgets by name:', widgetsByName);
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[SERIALIZE] Saved widgets by name:', widgetsByName);
+                }
 
                 // Store scale widget step configuration
                 const scaleWidget = this.widgets ? this.widgets.find(w => w instanceof ScaleWidget) : null;
@@ -4141,11 +4163,15 @@ app.registerExtension({
                     });
                 }
 
-                visibilityLogger.debug('[DESERIALIZE-BEFORE] Widget state:', beforeState);
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[DESERIALIZE-BEFORE] Widget state:', beforeState);
+                }
 
                 // Check if workflow has serialization diagnostics from save
                 if (info.widgets_config && info.widgets_config._serialization_diagnostics) {
-                    visibilityLogger.debug('[DESERIALIZE] Serialization diagnostics from workflow:', info.widgets_config._serialization_diagnostics);
+                    if (visibilityLogger.debugEnabled) {
+                        visibilityLogger.debug('[DESERIALIZE] Serialization diagnostics from workflow:', info.widgets_config._serialization_diagnostics);
+                    }
                 }
 
                 if (onConfigure) {
@@ -4164,10 +4190,14 @@ app.registerExtension({
                         if (info.widgets_values_by_name[widget.name] !== undefined) {
                             widget.value = info.widgets_values_by_name[widget.name];
                             restoredCount++;
-                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(widget.value)}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(widget.value)}`);
+                            }
                         } else {
                             skippedCount++;
-                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in saved data)`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in saved data)`);
+                            }
                         }
                     });
 
@@ -4186,7 +4216,9 @@ app.registerExtension({
                         const savedIndex = diagnostics.widgetPositions[widgetName];
                         if (savedIndex < info.widgets_values.length) {
                             valuesByName[widgetName] = info.widgets_values[savedIndex];
-                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Mapped ${widgetName} from saved index ${savedIndex}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Mapped ${widgetName} from saved index ${savedIndex}`);
+                            }
                         }
                     });
 
@@ -4207,10 +4239,14 @@ app.registerExtension({
                             // Restore value (will be validated later)
                             widget.value = savedValue;
                             restoredCount++;
-                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(savedValue)}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(savedValue)}`);
+                            }
                         } else {
                             skippedCount++;
-                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in diagnostics, keeping current value)`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in diagnostics, keeping current value)`);
+                            }
                         }
                     });
 
@@ -4288,7 +4324,9 @@ app.registerExtension({
                         });
                     }
 
-                    visibilityLogger.debug('[DESERIALIZE-AFTER] Widget state:', afterState);
+                    if (visibilityLogger.debugEnabled) {
+                        visibilityLogger.debug('[DESERIALIZE-AFTER] Widget state:', afterState);
+                    }
 
                     // Detect position changes (potential corruption source)
                     Object.keys(beforeState.widgetPositions).forEach(widgetName => {
