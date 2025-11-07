@@ -684,6 +684,326 @@ def test_edge_case_float_custom_ar():
     print("\n✅ Edge case test PASSED (no AttributeError on float input)")
 
 
+# ============================================================
+# CONFLICT DETECTION TESTS (7 types)
+# ============================================================
+
+def test_conflict_exact_dims_overrides_widgets():
+    """Conflict: Exact Dims mode overrides WIDTH/HEIGHT widgets (info severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - Exact Dims Overrides Widgets")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1024,
+        'height_enabled': True,
+        'height_value': 768,
+        'mp_enabled': False,
+        'mp_value': 1.5,
+        'image_mode_enabled': True,
+        'image_mode_value': 1,  # Exact Dims mode
+        'custom_ratio_enabled': False,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    # Mock image data
+    runtime_context = {
+        'image_info': {'width': 1920, 'height': 1080}
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Should have exact_dims_overrides_widgets conflict
+    assert len(result['conflicts']) > 0, "Expected conflicts to exist"
+
+    # Check for info severity conflict about ignoring WIDTH/HEIGHT
+    has_widget_override = any(
+        'ignores' in c['message'].lower() and
+        ('width' in c['message'].lower() or 'height' in c['message'].lower())
+        for c in result['conflicts']
+    )
+    assert has_widget_override, "Expected conflict about ignoring WIDTH/HEIGHT toggles"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_exact_dims_overrides_mp():
+    """Conflict: Exact Dims mode overrides MEGAPIXEL widget (info severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - Exact Dims Overrides MP")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': False,
+        'width_value': 1024,
+        'height_enabled': False,
+        'height_value': 768,
+        'mp_enabled': True,
+        'mp_value': 2.0,
+        'image_mode_enabled': True,
+        'image_mode_value': 1,  # Exact Dims mode
+        'custom_ratio_enabled': False,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    # Mock image data
+    runtime_context = {
+        'image_info': {'width': 1920, 'height': 1080}
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Should have conflicts (Exact Dims mode overrides everything)
+    assert len(result['conflicts']) > 0, "Expected conflicts to exist"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_mp_scalar_overrides_custom_ar():
+    """Conflict: MP+W+H scalar mode overrides custom_ratio (warning severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - MP Scalar Overrides Custom AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1920,
+        'height_enabled': True,
+        'height_value': 1080,
+        'mp_enabled': True,
+        'mp_value': 1.5,
+        'image_mode_enabled': False,
+        'image_mode_value': 0,
+        'custom_ratio_enabled': True,
+        'custom_aspect_ratio': '21:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, None)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Should have warning conflict about overriding custom_ratio
+    assert len(result['conflicts']) > 0, "Expected conflicts to exist"
+
+    has_custom_ar_override = any(
+        'overriding' in c['message'].lower() and
+        'custom' in c['message'].lower()
+        for c in result['conflicts']
+    )
+    assert has_custom_ar_override, "Expected conflict about overriding custom_ratio"
+
+    # Check severity
+    custom_ar_conflict = next(
+        (c for c in result['conflicts']
+         if 'overriding' in c['message'].lower() and 'custom' in c['message'].lower()),
+        None
+    )
+    if custom_ar_conflict:
+        assert custom_ar_conflict.get('severity') == 'warning', \
+            f"Expected warning severity, got {custom_ar_conflict.get('severity')}"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_mp_scalar_overrides_image_ar():
+    """Conflict: MP+W+H scalar mode overrides image AR (warning severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - MP Scalar Overrides Image AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1920,
+        'height_enabled': True,
+        'height_value': 1080,
+        'mp_enabled': True,
+        'mp_value': 1.5,
+        'image_mode_enabled': True,
+        'image_mode_value': 0,  # AR Only mode
+        'custom_ratio_enabled': False,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    # Mock image data with different AR
+    runtime_context = {
+        'image_info': {
+            'width': 2560,
+            'height': 1440,  # 16:9 AR
+            'aspect_ratio': 16/9
+        }
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # MP+W+H takes priority over AR Only mode, should have conflicts
+    assert len(result['conflicts']) > 0, "Expected conflicts to exist"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_explicit_dims_overrides_custom_ar():
+    """Conflict: Explicit dimensions override custom_ratio (warning severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - Explicit Dims Override Custom AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1024,
+        'height_enabled': True,
+        'height_value': 768,
+        'mp_enabled': False,
+        'mp_value': 1.5,
+        'image_mode_enabled': False,
+        'image_mode_value': 0,
+        'custom_ratio_enabled': True,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '21:9'
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, None)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Should have warning conflicts about overriding custom_ratio and dropdown
+    assert len(result['conflicts']) >= 2, f"Expected 2+ conflicts, got {len(result['conflicts'])}"
+
+    has_custom_ar_override = any(
+        'overriding' in c['message'].lower() and 'custom' in c['message'].lower()
+        for c in result['conflicts']
+    )
+    assert has_custom_ar_override, "Expected conflict about overriding custom_ratio"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_explicit_dims_overrides_image_ar():
+    """Conflict: Explicit dimensions override image AR (warning severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - Explicit Dims Override Image AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1024,
+        'height_enabled': True,
+        'height_value': 768,
+        'mp_enabled': False,
+        'mp_value': 1.5,
+        'image_mode_enabled': True,
+        'image_mode_value': 0,  # AR Only mode
+        'custom_ratio_enabled': False,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    # Mock image data
+    runtime_context = {
+        'image_info': {
+            'width': 1920,
+            'height': 1080,  # 16:9 AR
+            'aspect_ratio': 16/9
+        }
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Explicit dimensions (Priority 3) override AR Only mode (Priority 4)
+    # Should not be in AR Only mode
+    assert result['mode'] != 'ar_only', "Should not be in AR Only mode when explicit dims provided"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
+def test_conflict_ar_only_overrides_custom():
+    """Conflict: AR Only mode overrides custom_ratio (warning severity)"""
+    print("\n" + "="*60)
+    print("TEST: Conflict - AR Only Overrides Custom Ratio")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': False,
+        'width_value': 1024,
+        'height_enabled': False,
+        'height_value': 768,
+        'mp_enabled': True,
+        'mp_value': 1.5,
+        'image_mode_enabled': True,
+        'image_mode_value': 0,  # AR Only mode
+        'custom_ratio_enabled': True,
+        'custom_aspect_ratio': '21:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    # Mock image data with different AR
+    runtime_context = {
+        'image_info': {
+            'width': 2560,
+            'height': 1440,  # 16:9 AR
+            'aspect_ratio': 16/9
+        }
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - [{conflict.get('severity', 'unknown').upper()}] {conflict['message']}")
+
+    # Should have warning conflict about overriding custom_ratio
+    assert len(result['conflicts']) > 0, "Expected conflicts to exist"
+
+    has_custom_ar_override = any(
+        'overriding' in c['message'].lower() and 'custom' in c['message'].lower()
+        for c in result['conflicts']
+    )
+    assert has_custom_ar_override, "Expected conflict about overriding custom_ratio"
+
+    # Check severity
+    custom_ar_conflict = next(
+        (c for c in result['conflicts']
+         if 'overriding' in c['message'].lower() and 'custom' in c['message'].lower()),
+        None
+    )
+    if custom_ar_conflict:
+        assert custom_ar_conflict.get('severity') == 'warning', \
+            f"Expected warning severity, got {custom_ar_conflict.get('severity')}"
+
+    print("\n✅ Conflict detection test PASSED")
+
+
 def run_all_tests():
     """Run all test cases"""
     print("\n" + "="*60)
@@ -705,6 +1025,13 @@ def run_all_tests():
         ("Edge Case: Missing Image", test_edge_case_missing_image),
         ("Edge Case: Invalid Custom AR", test_edge_case_invalid_custom_ar),
         ("Edge Case: Float Custom AR", test_edge_case_float_custom_ar),
+        ("Conflict: Exact Dims Overrides Widgets", test_conflict_exact_dims_overrides_widgets),
+        ("Conflict: Exact Dims Overrides MP", test_conflict_exact_dims_overrides_mp),
+        ("Conflict: MP Scalar Overrides Custom AR", test_conflict_mp_scalar_overrides_custom_ar),
+        ("Conflict: MP Scalar Overrides Image AR", test_conflict_mp_scalar_overrides_image_ar),
+        ("Conflict: Explicit Dims Override Custom AR", test_conflict_explicit_dims_overrides_custom_ar),
+        ("Conflict: Explicit Dims Override Image AR", test_conflict_explicit_dims_overrides_image_ar),
+        ("Conflict: AR Only Overrides Custom", test_conflict_ar_only_overrides_custom),
     ]
 
     passed = 0
