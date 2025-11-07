@@ -4088,6 +4088,18 @@ app.registerExtension({
 
                 const data = onSerialize ? onSerialize.apply(this) : {};
 
+                // === PHASE 2A: NAME-BASED SERIALIZATION (v0.5.1) ===
+                // Serialize widgets by NAME instead of relying on array index
+                // This prevents corruption at the source rather than fixing it during restore
+                const widgetsByName = {};
+                if (this.widgets) {
+                    this.widgets.forEach(widget => {
+                        widgetsByName[widget.name] = widget.value;
+                    });
+                }
+                data.widgets_values_by_name = widgetsByName;
+                visibilityLogger.debug('[SERIALIZE] Saved widgets by name:', widgetsByName);
+
                 // Store scale widget step configuration
                 const scaleWidget = this.widgets ? this.widgets.find(w => w instanceof ScaleWidget) : null;
                 if (scaleWidget) {
@@ -4140,10 +4152,31 @@ app.registerExtension({
                     onConfigure.apply(this, arguments);
                 }
 
-                // === PHASE 2a: NAME-BASED RESTORE (v0.5.1) ===
+                // === PHASE 2A: DIRECT NAME-BASED RESTORE (v0.5.2) ===
+                // Prefer direct name-based serialization format over diagnostics-based restoration
+                // This is the cleanest approach - values serialized by name, restored by name
+                if (info.widgets_values_by_name) {
+                    visibilityLogger.info('[NAME-BASED-RESTORE] Using direct name-based serialization (v0.5.2+)');
+                    let restoredCount = 0;
+                    let skippedCount = 0;
+
+                    this.widgets.forEach(widget => {
+                        if (info.widgets_values_by_name[widget.name] !== undefined) {
+                            widget.value = info.widgets_values_by_name[widget.name];
+                            restoredCount++;
+                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(widget.value)}`);
+                        } else {
+                            skippedCount++;
+                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in saved data)`);
+                        }
+                    });
+
+                    visibilityLogger.info(`[NAME-BASED-RESTORE] Direct restore complete: ${restoredCount} restored, ${skippedCount} skipped`);
+                }
+                // === PHASE 2a: DIAGNOSTICS-BASED RESTORE (v0.5.1 fallback) ===
                 // Fix corruption by restoring widget values by name instead of index
                 // Uses serialization diagnostics to map widget names to their saved values
-                if (info.widgets_config && info.widgets_config._serialization_diagnostics && info.widgets_values) {
+                else if (info.widgets_config && info.widgets_config._serialization_diagnostics && info.widgets_values) {
                     const diagnostics = info.widgets_config._serialization_diagnostics;
                     visibilityLogger.info('[NAME-BASED-RESTORE] Using serialization diagnostics to restore by name');
 
