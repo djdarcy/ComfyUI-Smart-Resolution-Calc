@@ -29,6 +29,536 @@ def pil2tensor(image):
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
 
 
+class DimensionSourceCalculator:
+    """
+    Python equivalent of JavaScript DimensionSourceManager.
+
+    Manages dimension source priority and aspect ratio determination.
+    Implements complete state machine with 6 priority levels to resolve dimension/AR conflicts.
+
+    Priority Hierarchy:
+    1. USE IMAGE DIMS = Exact Dims (absolute override)
+    2. MP + W + H (scalar with AR from W:H)
+    3. Explicit Dimensions (W+H, MP+W, MP+H)
+    4. USE IMAGE DIMS = AR Only
+    5. Single dimension with AR (W/H/MP + AR source)
+    6. Defaults with AR
+
+    Related Issues: #15 (umbrella), #16 (implementation), #19 (Python parity)
+    """
+
+    def __init__(self):
+        """Initialize dimension source calculator"""
+        pass
+
+    def calculate_dimension_source(self, widgets, runtime_context=None):
+        """
+        Determine active dimension source and calculate base dimensions.
+        Returns complete calculation context including mode, dimensions, AR, conflicts.
+
+        Args:
+            widgets (dict): Widget state dictionary with keys:
+                - width_enabled, width_value
+                - height_enabled, height_value
+                - mp_enabled, mp_value
+                - image_mode_enabled, image_mode_value (0=AR Only, 1=Exact Dims)
+                - custom_ratio_enabled
+                - custom_aspect_ratio (text)
+                - aspect_ratio_dropdown (dropdown selection)
+            runtime_context (dict): Runtime data including:
+                - image_info: dict with width, height (if image loaded)
+                - exact_dims: bool (whether exact dims mode is active)
+
+        Returns:
+            dict: {
+                'mode': str,           # e.g. "mp_width_explicit"
+                'priority': int,       # 1-6
+                'baseW': int,
+                'baseH': int,
+                'source': str,         # e.g. "widgets_mp_computed"
+                'ar': dict,            # {ratio, aspectW, aspectH}
+                'conflicts': list,     # [{type, severity, message, affectedWidgets}]
+                'description': str,    # e.g. "MP+W: 1200×1250 (...)"
+                'activeSources': list  # e.g. ['WIDTH', 'MEGAPIXEL']
+            }
+        """
+        runtime_context = runtime_context or {}
+
+        logger.debug(f'[Calculator] widgets: {widgets}')
+        logger.debug(f'[Calculator] runtime_context: {runtime_context}')
+
+        # PRIORITY 1: Exact Dims mode
+        if widgets.get('image_mode_enabled') and widgets.get('image_mode_value') == 1:
+            logger.debug('[Calculator] Taking Priority 1: Exact Dims')
+            return self._calculate_exact_dims(widgets, runtime_context)
+
+        # Check which dimension widgets are enabled
+        has_mp = widgets.get('mp_enabled', False)
+        has_width = widgets.get('width_enabled', False)
+        has_height = widgets.get('height_enabled', False)
+
+        logger.debug(f'[Calculator] has_mp: {has_mp}, has_width: {has_width}, has_height: {has_height}')
+
+        # PRIORITY 2: WIDTH + HEIGHT + MEGAPIXEL (all three)
+        if has_mp and has_width and has_height:
+            logger.debug('[Calculator] Taking Priority 2: MP+W+H')
+            return self._calculate_mp_scalar_with_ar(widgets)
+
+        # PRIORITY 3: Explicit dimensions (three variants)
+        if has_width and has_height:
+            logger.debug('[Calculator] Taking Priority 3: W+H explicit')
+            return self._calculate_width_height_explicit(widgets)
+        if has_mp and has_width:
+            logger.debug('[Calculator] Taking Priority 3: MP+W explicit')
+            return self._calculate_mp_width_explicit(widgets)
+        if has_mp and has_height:
+            logger.debug('[Calculator] Taking Priority 3: MP+H explicit')
+            return self._calculate_mp_height_explicit(widgets)
+
+        # PRIORITY 4: AR Only mode (image AR + dimension widgets)
+        if widgets.get('image_mode_enabled') and widgets.get('image_mode_value') == 0:
+            logger.debug('[Calculator] Taking Priority 4: AR Only')
+            return self._calculate_ar_only(widgets, runtime_context)
+
+        # PRIORITY 5: Single dimension with AR
+        if has_width:
+            logger.debug('[Calculator] Taking Priority 5: Width with AR')
+            return self._calculate_width_with_ar(widgets)
+        if has_height:
+            logger.debug('[Calculator] Taking Priority 5: Height with AR')
+            return self._calculate_height_with_ar(widgets)
+        if has_mp:
+            logger.debug('[Calculator] Taking Priority 5: MP with AR')
+            return self._calculate_mp_with_ar(widgets)
+
+        # PRIORITY 6: Defaults
+        logger.debug('[Calculator] Taking Priority 6: Defaults')
+        return self._calculate_defaults(widgets)
+
+    # ========================================
+    # Priority Level Implementations
+    # ========================================
+
+    def _calculate_exact_dims(self, widgets, runtime_context):
+        """Priority 1: USE IMAGE DIMS = Exact Dims"""
+        image_info = runtime_context.get('image_info')
+
+        if not image_info:
+            # No image loaded, fall back to defaults
+            logger.debug('[Calculator] No image for Exact Dims, falling back to defaults')
+            return self._calculate_defaults(widgets)
+
+        w = image_info['width']
+        h = image_info['height']
+        ar = self._compute_ar_from_dimensions(w, h)
+
+        return {
+            'mode': 'exact_dims',
+            'priority': 1,
+            'baseW': w,
+            'baseH': h,
+            'source': 'image',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('exact_dims', widgets),
+            'description': 'USE IMAGE DIMS = Exact Dims (overrides all widgets)',
+            'activeSources': []
+        }
+
+    def _calculate_mp_scalar_with_ar(self, widgets):
+        """Priority 2: WIDTH + HEIGHT + MEGAPIXEL (scalar with AR from W:H)"""
+        w = widgets['width_value']
+        h = widgets['height_value']
+        target_mp = widgets['mp_value'] * 1_000_000
+
+        # Compute AR from WIDTH/HEIGHT
+        ar = self._compute_ar_from_dimensions(w, h)
+
+        # Scale to MEGAPIXEL target maintaining AR
+        # Solve: scaledW × scaledH = targetMP, scaledW/scaledH = ar['ratio']
+        import math
+        scaled_h = math.sqrt(target_mp / ar['ratio'])
+        scaled_w = scaled_h * ar['ratio']
+
+        return {
+            'mode': 'mp_scalar_with_ar',
+            'priority': 2,
+            'baseW': round(scaled_w),
+            'baseH': round(scaled_h),
+            'source': 'widgets_mp_scalar',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('mp_scalar_with_ar', widgets),
+            'description': f"MP+W+H: AR {ar['aspectW']}:{ar['aspectH']} from {w}×{h}, scaled to {widgets['mp_value']}MP",
+            'activeSources': ['WIDTH', 'HEIGHT', 'MEGAPIXEL']
+        }
+
+    def _calculate_width_height_explicit(self, widgets):
+        """Priority 3a: WIDTH + HEIGHT (both specified)"""
+        w = widgets['width_value']
+        h = widgets['height_value']
+        ar = self._compute_ar_from_dimensions(w, h)
+
+        return {
+            'mode': 'width_height_explicit',
+            'priority': 3,
+            'baseW': w,
+            'baseH': h,
+            'source': 'widgets_explicit',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('width_height_explicit', widgets),
+            'description': f"Explicit dimensions: {w}×{h} (AR {ar['aspectW']}:{ar['aspectH']} implied)",
+            'activeSources': ['WIDTH', 'HEIGHT']
+        }
+
+    def _calculate_mp_width_explicit(self, widgets):
+        """Priority 3b: WIDTH + MEGAPIXEL → calculate height"""
+        w = widgets['width_value']
+        target_mp = widgets['mp_value'] * 1_000_000
+
+        # Calculate: H = (MP × 1,000,000) / W
+        h = round(target_mp / w) if w > 0 else 1080
+        if w <= 0:
+            logger.warning(f'[Calculator] Invalid width ({w}) in MP+W mode, using fallback H=1080')
+
+        ar = self._compute_ar_from_dimensions(w, h)
+
+        return {
+            'mode': 'mp_width_explicit',
+            'priority': 3,
+            'baseW': w,
+            'baseH': h,
+            'source': 'widgets_mp_computed',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('mp_width_explicit', widgets),
+            'description': f"MP+W: {w}×{h} (H computed from {widgets['mp_value']}MP, AR {ar['aspectW']}:{ar['aspectH']} implied)",
+            'activeSources': ['WIDTH', 'MEGAPIXEL']
+        }
+
+    def _calculate_mp_height_explicit(self, widgets):
+        """Priority 3c: HEIGHT + MEGAPIXEL → calculate width"""
+        h = widgets['height_value']
+        target_mp = widgets['mp_value'] * 1_000_000
+
+        # Calculate: W = (MP × 1,000,000) / H
+        w = round(target_mp / h) if h > 0 else 1920
+        if h <= 0:
+            logger.warning(f'[Calculator] Invalid height ({h}) in MP+H mode, using fallback W=1920')
+
+        ar = self._compute_ar_from_dimensions(w, h)
+
+        return {
+            'mode': 'mp_height_explicit',
+            'priority': 3,
+            'baseW': w,
+            'baseH': h,
+            'source': 'widgets_mp_computed',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('mp_height_explicit', widgets),
+            'description': f"MP+H: {w}×{h} (W computed from {widgets['mp_value']}MP, AR {ar['aspectW']}:{ar['aspectH']} implied)",
+            'activeSources': ['HEIGHT', 'MEGAPIXEL']
+        }
+
+    def _calculate_ar_only(self, widgets, runtime_context):
+        """Priority 4: USE IMAGE DIMS = AR Only (image AR + dimension widgets)"""
+        image_info = runtime_context.get('image_info')
+
+        if not image_info:
+            # No image, fall back to defaults
+            logger.debug('[Calculator] No image for AR Only, falling back to defaults')
+            return self._calculate_defaults(widgets)
+
+        # Get image AR
+        img_w = image_info['width']
+        img_h = image_info['height']
+        image_ar = self._compute_ar_from_dimensions(img_w, img_h)
+
+        # Use image AR with dimension widgets
+        has_width = widgets.get('width_enabled', False)
+        has_height = widgets.get('height_enabled', False)
+        has_mp = widgets.get('mp_enabled', False)
+
+        if has_width:
+            base_w = widgets['width_value']
+            base_h = round(base_w / image_ar['ratio'])
+            dimension_source = 'WIDTH'
+        elif has_height:
+            base_h = widgets['height_value']
+            base_w = round(base_h * image_ar['ratio'])
+            dimension_source = 'HEIGHT'
+        elif has_mp:
+            target_mp = widgets['mp_value'] * 1_000_000
+            import math
+            base_h = math.sqrt(target_mp / image_ar['ratio'])
+            base_w = round(base_h * image_ar['ratio'])
+            base_h = round(base_h)
+            dimension_source = 'MEGAPIXEL'
+        else:
+            # No dimension widget, use defaults with image AR
+            default_mp = 1.0 * 1_000_000
+            import math
+            base_h = math.sqrt(default_mp / image_ar['ratio'])
+            base_w = round(base_h * image_ar['ratio'])
+            base_h = round(base_h)
+            dimension_source = 'defaults'
+
+        return {
+            'mode': 'ar_only',
+            'priority': 4,
+            'baseW': base_w,
+            'baseH': base_h,
+            'source': 'image_ar',
+            'ar': image_ar,
+            'conflicts': self._detect_conflicts('ar_only', widgets),
+            'description': f"{dimension_source} & image_ar: {image_ar['aspectW']}:{image_ar['aspectH']} ({img_w}×{img_h})",
+            'activeSources': [dimension_source] if dimension_source != 'defaults' else []
+        }
+
+    def _calculate_width_with_ar(self, widgets):
+        """Priority 5a: WIDTH + Aspect Ratio"""
+        w = widgets['width_value']
+        ar = self._get_active_aspect_ratio(widgets)
+        h = round(w / ar['ratio'])
+
+        return {
+            'mode': 'width_with_ar',
+            'priority': 5,
+            'baseW': w,
+            'baseH': h,
+            'source': 'widget_with_ar',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('width_with_ar', widgets),
+            'description': f"WIDTH {w} with AR {ar['aspectW']}:{ar['aspectH']} ({ar['source']})",
+            'activeSources': ['WIDTH']
+        }
+
+    def _calculate_height_with_ar(self, widgets):
+        """Priority 5b: HEIGHT + Aspect Ratio"""
+        h = widgets['height_value']
+        ar = self._get_active_aspect_ratio(widgets)
+        w = round(h * ar['ratio'])
+
+        return {
+            'mode': 'height_with_ar',
+            'priority': 5,
+            'baseW': w,
+            'baseH': h,
+            'source': 'widget_with_ar',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('height_with_ar', widgets),
+            'description': f"HEIGHT {h} with AR {ar['aspectW']}:{ar['aspectH']} ({ar['source']})",
+            'activeSources': ['HEIGHT']
+        }
+
+    def _calculate_mp_with_ar(self, widgets):
+        """Priority 5c: MEGAPIXEL + Aspect Ratio"""
+        target_mp = widgets['mp_value'] * 1_000_000
+        ar = self._get_active_aspect_ratio(widgets)
+
+        import math
+        h = math.sqrt(target_mp / ar['ratio'])
+        w = h * ar['ratio']
+
+        return {
+            'mode': 'mp_with_ar',
+            'priority': 5,
+            'baseW': round(w),
+            'baseH': round(h),
+            'source': 'widget_with_ar',
+            'ar': ar,
+            'conflicts': self._detect_conflicts('mp_with_ar', widgets),
+            'description': f"MEGAPIXEL {widgets['mp_value']}MP with AR {ar['aspectW']}:{ar['aspectH']} ({ar['source']})",
+            'activeSources': ['MEGAPIXEL']
+        }
+
+    def _calculate_defaults(self, widgets):
+        """Priority 6: Defaults (1.0 MP + Aspect Ratio)"""
+        ar = self._get_active_aspect_ratio(widgets)
+        default_mp = 1.0 * 1_000_000
+
+        import math
+        h = math.sqrt(default_mp / ar['ratio'])
+        w = h * ar['ratio']
+
+        return {
+            'mode': 'defaults_with_ar',
+            'priority': 6,
+            'baseW': round(w),
+            'baseH': round(h),
+            'source': 'defaults',
+            'ar': ar,
+            'conflicts': [],
+            'description': f"Defaults: 1.0MP with AR {ar['aspectW']}:{ar['aspectH']} ({ar['source']})",
+            'activeSources': []
+        }
+
+    # ========================================
+    # Aspect Ratio Determination
+    # ========================================
+
+    def _get_active_aspect_ratio(self, widgets):
+        """
+        Get active aspect ratio based on context.
+        Priority: custom_ratio > dropdown aspect_ratio
+
+        Note: Image AR is handled separately in Priority 4 (AR Only mode)
+        """
+        # Priority 1: custom_ratio (if enabled)
+        if widgets.get('custom_ratio_enabled'):
+            custom_ar_text = widgets.get('custom_aspect_ratio', '1:1')
+            return self._parse_custom_aspect_ratio(custom_ar_text)
+
+        # Priority 2: aspect_ratio dropdown
+        ar_value = widgets.get('aspect_ratio_dropdown', '16:9 (HD Video/YouTube/TV)')
+        return self._parse_dropdown_aspect_ratio(ar_value)
+
+    # ========================================
+    # Helper Methods
+    # ========================================
+
+    def _compute_ar_from_dimensions(self, w, h):
+        """Compute aspect ratio from dimensions using GCD reduction"""
+        divisor = gcd(w, h)
+        aspect_w = w // divisor
+        aspect_h = h // divisor
+        ratio = w / h
+
+        return {
+            'ratio': ratio,
+            'aspectW': aspect_w,
+            'aspectH': aspect_h
+        }
+
+    def _parse_custom_aspect_ratio(self, text):
+        """Parse custom aspect ratio text (e.g. '16:9' or '2.39:1')"""
+        import re
+
+        # Handle case where text is a number instead of string (widget value bug)
+        if not isinstance(text, str):
+            text = str(text)
+
+        # Match patterns like "16:9" or "2.39:1"
+        match = re.match(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$', text.strip())
+        if match:
+            w = float(match.group(1))
+            h = float(match.group(2))
+            return {
+                'ratio': w / h,
+                'aspectW': w,
+                'aspectH': h,
+                'source': 'custom_ratio'
+            }
+
+        # Fallback to 16:9
+        logger.warning(f'[Calculator] Invalid custom AR text: "{text}", falling back to 16:9')
+        return {
+            'ratio': 16 / 9,
+            'aspectW': 16,
+            'aspectH': 9,
+            'source': 'fallback'
+        }
+
+    def _parse_dropdown_aspect_ratio(self, value):
+        """Parse dropdown aspect ratio (e.g. '16:9 (HD Video/YouTube/TV)' → 16:9)"""
+        import re
+
+        # Extract "W:H" from dropdown text
+        match = re.match(r'^(\d+):(\d+)', value)
+        if match:
+            w = int(match.group(1))
+            h = int(match.group(2))
+            return {
+                'ratio': w / h,
+                'aspectW': w,
+                'aspectH': h,
+                'source': 'dropdown'
+            }
+
+        # Fallback to 16:9
+        logger.warning(f'[Calculator] Invalid dropdown AR: "{value}", falling back to 16:9')
+        return {
+            'ratio': 16 / 9,
+            'aspectW': 16,
+            'aspectH': 9,
+            'source': 'fallback'
+        }
+
+    def _detect_conflicts(self, active_mode, widgets):
+        """
+        Detect conflicts between active mode and widget states.
+        Returns list of conflict dicts: {type, severity, message, affectedWidgets}
+        """
+        conflicts = []
+
+        # Exact Dims conflicts
+        if active_mode == 'exact_dims':
+            if widgets.get('width_enabled') or widgets.get('height_enabled'):
+                conflicts.append({
+                    'type': 'exact_dims_overrides_widgets',
+                    'severity': 'info',
+                    'message': '⚠️ Exact Dims mode ignores WIDTH/HEIGHT toggles',
+                    'affectedWidgets': ['dimension_width', 'dimension_height']
+                })
+            if widgets.get('mp_enabled'):
+                conflicts.append({
+                    'type': 'exact_dims_overrides_mp',
+                    'severity': 'info',
+                    'message': '⚠️ Exact Dims mode ignores MEGAPIXEL setting',
+                    'affectedWidgets': ['dimension_megapixel']
+                })
+
+        # MP Scalar conflicts (Priority 2)
+        if active_mode == 'mp_scalar_with_ar':
+            if widgets.get('custom_ratio_enabled'):
+                conflicts.append({
+                    'type': 'mp_scalar_overrides_custom_ar',
+                    'severity': 'warning',
+                    'message': '⚠️ WIDTH+HEIGHT creates explicit AR, overriding custom_ratio',
+                    'affectedWidgets': ['custom_ratio', 'custom_aspect_ratio']
+                })
+            if widgets.get('image_mode_enabled') and widgets.get('image_mode_value') == 0:
+                conflicts.append({
+                    'type': 'mp_scalar_overrides_image_ar',
+                    'severity': 'warning',
+                    'message': '⚠️ WIDTH+HEIGHT creates explicit AR, overriding image AR',
+                    'affectedWidgets': ['image_mode']
+                })
+
+        # Explicit dimension conflicts (Priority 3)
+        if active_mode in ['width_height_explicit', 'mp_width_explicit', 'mp_height_explicit']:
+            if widgets.get('custom_ratio_enabled'):
+                conflicts.append({
+                    'type': 'explicit_dims_overrides_custom_ar',
+                    'severity': 'warning',
+                    'message': '⚠️ Explicit dimensions create implied AR, overriding custom_ratio',
+                    'affectedWidgets': ['custom_ratio', 'custom_aspect_ratio']
+                })
+            if widgets.get('image_mode_enabled') and widgets.get('image_mode_value') == 0:
+                conflicts.append({
+                    'type': 'explicit_dims_overrides_image_ar',
+                    'severity': 'warning',
+                    'message': '⚠️ Explicit dimensions create implied AR, overriding image AR',
+                    'affectedWidgets': ['image_mode']
+                })
+            # Dropdown AR is always overridden by explicit dimensions (info level)
+            conflicts.append({
+                'type': 'explicit_dims_overrides_dropdown_ar',
+                'severity': 'info',
+                'message': '⚠️ Explicit dimensions create implied AR, ignoring dropdown',
+                'affectedWidgets': ['aspect_ratio']
+            })
+
+        # AR Only conflicts
+        if active_mode == 'ar_only':
+            if widgets.get('custom_ratio_enabled'):
+                conflicts.append({
+                    'type': 'ar_only_overrides_custom',
+                    'severity': 'warning',
+                    'message': '⚠️ AR Only mode uses image AR, overriding custom_ratio',
+                    'affectedWidgets': ['custom_ratio', 'custom_aspect_ratio']
+                })
+
+        return conflicts
+
+
 class SmartResolutionCalc:
     """
     Smart Resolution Calculator - Flexible resolution and latent generation node.
@@ -42,39 +572,44 @@ class SmartResolutionCalc:
     @classmethod
     def INPUT_TYPES(cls):
         aspect_ratios = [
-            "1:1 (Perfect Square)",
-            "2:3 (Classic Portrait)",
-            "3:4 (Golden Ratio)",
+            "1:1 (Square - Instagram/Profile)",
+            "2:3 (Photo Print 4×6)",
+            "3:4 (SD Video Portrait)",
             "3:5 (Elegant Vertical)",
-            "4:5 (Artistic Frame)",
-            "5:7 (Balanced Portrait)",
-            "5:8 (Tall Portrait)",
+            "4:5 (Instagram Portrait)",
+            "5:7 (Photo Print 5×7)",
+            "5:8 (Tall Photo Print)",
             "7:9 (Modern Portrait)",
-            "9:16 (Slim Vertical)",
-            "9:19 (Tall Slim)",
-            "9:21 (Ultra Tall)",
-            "9:32 (Skyline)",
-            "3:2 (Golden Landscape)",
-            "4:3 (Classic Landscape)",
-            "5:3 (Wide Horizon)",
-            "5:4 (Balanced Frame)",
-            "7:5 (Elegant Landscape)",
-            "8:5 (Cinematic View)",
+            "9:16 (Vert Vid: YT Short/TikTok/Reels)",
+            "9:19 (Tall Mobile Screen)",
+            "9:21 (Ultra Tall Mobile)",
+            "9:32 (Vertical Ultrawide)",
+            "3:2 (Photo Print 6×4)",
+            "4:3 (SD TV/Monitor)",
+            "5:3 (Wide Photo Print)",
+            "5:4 (Monitor 1280×1024)",
+            "7:5 (Photo Print 7×5)",
+            "8:5 (16:10 Monitor/Laptop)",
             "9:7 (Artful Horizon)",
-            "16:9 (Panorama)",
-            "19:9 (Cinematic Ultrawide)",
-            "21:9 (Epic Ultrawide)",
-            "32:9 (Extreme Ultrawide)"
+            "16:9 (HD Video/YouTube/TV)",
+            "19:9 (Ultrawide Phone)",
+            "21:9 (Ultrawide Cinema 2.35:1)",
+            "32:9 (Super Ultrawide Monitor)"
         ]
 
         return {
             "required": {
-                "aspect_ratio": (aspect_ratios, {"default": "3:4 (Golden Ratio)"}),
+                "aspect_ratio": (aspect_ratios, {"default": "3:4 (SD Video Portrait)"}),
                 "divisible_by": (["Exact", "8", "16", "32", "64"], {"default": "16"}),
                 "custom_ratio": ("BOOLEAN", {"default": False, "label_on": "Enable", "label_off": "Disable"}),
             },
             "optional": {
-                "custom_aspect_ratio": ("STRING", {"default": "16:9"}),
+                "mode_status": ("STRING", {
+                    "default": "Calculating...",
+                    "multiline": False,
+                    "tooltip": "Shows current dimension calculation mode (updated automatically, read-only)"
+                }),
+                "custom_aspect_ratio": ("STRING", {"default": "5.2:2.5"}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
                 "scale": ("FLOAT", {
                     "default": 1.0,
@@ -94,7 +629,7 @@ class SmartResolutionCalc:
                     "tooltip": "Fill pattern for empty images:\n• black: Solid black (#000000)\n• white: Solid white (#FFFFFF)\n• custom_color: Use fill_color hex value\n• noise: Gaussian noise (camera-like, centered around gray)\n• random: Uniform random pixels (TV static, full color range)"
                 }),
                 "fill_color": ("STRING", {
-                    "default": "#808080",
+                    "default": "#522525",
                     "tooltip": "Hex color code for custom_color fill type.\nFormat: #RRGGBB (e.g., #FF0000=red, #00FF00=green, #0000FF=blue)\nWith or without # prefix. Only used when fill_type is 'custom_color'."
                 }),
             },
@@ -190,6 +725,70 @@ class SmartResolutionCalc:
                 'error': str(e)
             }
 
+    @staticmethod
+    def calculate_dimensions_api(widgets, runtime_context=None):
+        """
+        API endpoint method for dimension calculation.
+
+        This is the single source of truth for dimension calculations.
+        JavaScript calls this via /smart-resolution/calculate-dimensions endpoint.
+
+        Args:
+            widgets (dict): Widget state from JavaScript
+                {
+                    "width_enabled": bool,
+                    "width_value": int,
+                    "height_enabled": bool,
+                    "height_value": int,
+                    "mp_enabled": bool,
+                    "mp_value": float,
+                    "image_mode_enabled": bool,
+                    "image_mode_value": int,  # 0=AR Only, 1=Exact Dims
+                    "custom_ratio_enabled": bool,
+                    "custom_aspect_ratio": str,
+                    "aspect_ratio_dropdown": str
+                }
+            runtime_context (dict): Optional runtime data
+                {
+                    "image_info": {"width": int, "height": int}
+                }
+
+        Returns:
+            dict: Calculation result
+                {
+                    "mode": str,
+                    "priority": int,
+                    "baseW": int,
+                    "baseH": int,
+                    "source": str,
+                    "ar": {"ratio": float, "aspectW": int, "aspectH": int, "source": str},
+                    "conflicts": list,
+                    "description": str,
+                    "activeSources": list,
+                    "success": bool
+                }
+        """
+        try:
+            # Create calculator instance
+            calculator = DimensionSourceCalculator()
+
+            # Call calculator
+            result = calculator.calculate_dimension_source(widgets, runtime_context)
+
+            # Add success flag
+            result['success'] = True
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error calculating dimensions: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def __init__(self):
         self.device = comfy.model_management.intermediate_device()
 
@@ -210,6 +809,63 @@ class SmartResolutionCalc:
         w_ratio = width // divisor
         h_ratio = height // divisor
         return f"{w_ratio}:{h_ratio}"
+
+    def calculate_mode_label_for_info(self, use_width, use_height, use_mp, use_image, exact_dims, ar_source_label, calculated_ar):
+        """
+        Calculate mode label for info output based on active widget states.
+
+        Mirrors JavaScript's DimensionSourceManager priority system to ensure consistency
+        between MODE widget display and info output.
+
+        Args:
+            ar_source_label: String describing AR source, e.g., "Image AR (1:1)", "Aspect Ratio (16:9)"
+            calculated_ar: The actual AR calculated from dimensions (e.g., "16:9")
+
+        Priority order (matching JavaScript):
+        1. Image Exact Dims
+        2. Width + Height (show calculated AR)
+        3. Width + Megapixels (show calculated AR)
+        4. Height + Megapixels (show calculated AR)
+        5. Width + Aspect Ratio (with source context)
+        6. Height + Aspect Ratio (with source context)
+        7. Megapixels + Aspect Ratio (with source context)
+        8. Default (1.0 MP) / Image AR Only mode
+        """
+        # Priority 1: Image Exact Dims
+        if use_image and exact_dims:
+            return f"Image Exact Dims (AR: {calculated_ar})"
+
+        # Priority 2: Width + Height (both specified - show calculated AR)
+        if use_width and use_height:
+            return f"Width + Height (AR: {calculated_ar})"
+
+        # Priority 3: Width + Megapixels (show calculated AR)
+        if use_width and use_mp:
+            return f"Width + Megapixels (AR: {calculated_ar})"
+
+        # Priority 4: Height + Megapixels (show calculated AR)
+        if use_height and use_mp:
+            return f"Height + Megapixels (AR: {calculated_ar})"
+
+        # Priority 5: Width + Aspect Ratio (show AR source with ratio)
+        if use_width:
+            return f"Width + {ar_source_label}"
+
+        # Priority 6: Height + Aspect Ratio (show AR source with ratio)
+        if use_height:
+            return f"Height + {ar_source_label}"
+
+        # Priority 7: Megapixels + Aspect Ratio (show AR source with ratio)
+        if use_mp:
+            return f"Megapixels + {ar_source_label}"
+
+        # Priority 8: Default or Image AR Only
+        if use_image and not exact_dims:
+            # AR Only mode with no dimension widgets - using defaults with image AR
+            return f"Default (1.0 MP) + {ar_source_label}"
+
+        # Pure default mode (no inputs active - show calculated AR)
+        return f"Default (1.0 MP) (AR: {calculated_ar})"
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
@@ -332,53 +988,76 @@ class SmartResolutionCalc:
 
         logger.debug(f"Parsed: w_ratio={w_ratio}, h_ratio={h_ratio}, divisor={divisor}")
 
-        # Calculate based on active toggles (priority order)
-        if use_width and use_height:
-            # Both dimensions specified - calculate megapixels, actual aspect may differ
-            w = width_val
-            h = height_val
-            # Calculate and display actual aspect ratio (GCD-reduced for reusability)
-            actual_ar = self.format_aspect_ratio(w, h)
-            ratio_display = actual_ar  # Use calculated AR for preview instead of preset
-            mode = f"Width + Height (AR: {actual_ar})"
-            info_detail_base = f"Base W: {w} × H: {h}"
-            logger.debug(f"Mode: Width + Height - width={width_val}, height={height_val}, actual AR={actual_ar}")
+        # ========================================
+        # Use DimensionSourceCalculator for dimension calculation
+        # ========================================
+        # Build widgets dict from kwargs
+        widgets = {
+            'width_enabled': use_width,
+            'width_value': width_val,
+            'height_enabled': use_height,
+            'height_value': height_val,
+            'mp_enabled': use_mp,
+            'mp_value': megapixel_val,
+            'image_mode_enabled': use_image,
+            'image_mode_value': 1 if exact_dims else 0,  # 0=AR Only, 1=Exact Dims
+            'custom_ratio_enabled': custom_ratio,
+            'custom_aspect_ratio': custom_aspect_ratio if custom_ratio else '16:9',
+            'aspect_ratio_dropdown': aspect_ratio
+        }
 
-        elif use_width:
-            # Width + aspect ratio → calculate height
-            w = width_val
-            h = int(width_val * h_ratio / w_ratio)
-            mode = "Width + Aspect Ratio"
-            info_detail_base = f"Calculated H: {h}"
-            logger.debug(f"Mode: {mode} - width={width_val}, calculated h={h}")
+        # Build runtime context (includes image info if available)
+        runtime_context = {}
+        if image is not None and use_image:
+            # Extract dimensions from first image in batch
+            # Image tensor shape: [batch, height, width, channels]
+            img_h, img_w = image.shape[1], image.shape[2]
+            runtime_context['image_info'] = {
+                'width': img_w,
+                'height': img_h
+            }
 
-        elif use_height:
-            # Height + aspect ratio → calculate width
-            w = int(height_val * w_ratio / h_ratio)
-            h = height_val
-            mode = "Height + Aspect Ratio"
-            info_detail_base = f"Calculated W: {w}"
-            logger.debug(f"Mode: {mode} - height={height_val}, calculated w={w}")
+        # Create calculator and get dimension source
+        calculator = DimensionSourceCalculator()
+        result = calculator.calculate_dimension_source(widgets, runtime_context)
 
-        elif use_mp:
-            # Megapixels + aspect ratio → calculate both dimensions
-            total_pixels = megapixel_val * 1_000_000
-            dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
-            w = int(dimension * w_ratio)
-            h = int(dimension * h_ratio)
-            mode = "Megapixels + Aspect Ratio"
-            info_detail_base = f"Calculated W: {w} × H: {h}"
-            logger.debug(f"Mode: {mode} - mp={megapixel_val} → w={w}, h={h}")
+        # Extract base dimensions and metadata from calculator result
+        w = result['baseW']
+        h = result['baseH']
+        calculated_ar = f"{result['ar']['aspectW']}:{result['ar']['aspectH']}"
 
-        else:
-            # No inputs active - use default (1.0 MP at aspect ratio)
-            total_pixels = 1.0 * 1_000_000
-            dimension = (total_pixels / (w_ratio * h_ratio)) ** 0.5
-            w = int(dimension * w_ratio)
-            h = int(dimension * h_ratio)
-            mode = "Default (1.0 MP)"
+        # For ratio_display: use calculated AR (GCD-reduced from actual dimensions)
+        ratio_display = calculated_ar
+
+        # Mode for logging (internal description)
+        mode = result['description']
+
+        # Info detail base (will be enhanced with scale/div info below)
+        if result['priority'] == 1:  # Exact Dims
+            info_detail_base = f"From Image: {w}×{h}"
+        elif result['priority'] == 2:  # MP+W+H Scalar
+            info_detail_base = f"AR from W×H, scaled to {megapixel_val}MP"
+        elif result['priority'] == 3:  # Explicit dimensions
+            if result['mode'] == 'width_height_explicit':
+                info_detail_base = f"Base W: {w} × H: {h}"
+            elif result['mode'] == 'mp_width_explicit':
+                info_detail_base = f"Calculated H: {h} from {megapixel_val}MP"
+            elif result['mode'] == 'mp_height_explicit':
+                info_detail_base = f"Calculated W: {w} from {megapixel_val}MP"
+        elif result['priority'] == 4:  # AR Only
+            info_detail_base = f"Using image AR {calculated_ar}"
+        elif result['priority'] == 5:  # Single dimension with AR
+            if 'WIDTH' in result.get('activeSources', []):
+                info_detail_base = f"Calculated H: {h}"
+            elif 'HEIGHT' in result.get('activeSources', []):
+                info_detail_base = f"Calculated W: {w}"
+            elif 'MEGAPIXEL' in result.get('activeSources', []):
+                info_detail_base = f"Calculated W: {w} × H: {h}"
+        else:  # Priority 6: Defaults
             info_detail_base = f"W: {w} × H: {h}"
-            logger.debug(f"Mode: {mode} - no toggles active, defaulting to 1.0 MP")
+
+        logger.debug(f"Calculator result: mode={result['mode']}, priority={result['priority']}, baseW={w}, baseH={h}, AR={calculated_ar}")
+        logger.debug(f"Mode description: {mode}")
 
         # Apply scale multiplier
         # Clamp scale to minimum 0.0 (user requirement: allow 0 but it's clamped by default)
@@ -389,18 +1068,19 @@ class SmartResolutionCalc:
             logger.warning(f"Scale {scale}x exceeds recommended maximum (7x). This may cause out-of-memory errors.")
             print(f"[SmartResCalc] WARNING: Scale {scale}x is very high and may exceed GPU limits")
 
-        # Apply scale to base dimensions
-        w_scaled = int(w * scale)
-        h_scaled = int(h * scale)
+        # Apply scale to base dimensions (keep float precision for accurate divisibility rounding)
+        w_scaled = w * scale
+        h_scaled = h * scale
 
         # Warn if scaled dimensions exceed typical GPU limits
         if w_scaled > 16384 or h_scaled > 16384:
-            logger.warning(f"Scaled dimensions {w_scaled}×{h_scaled} exceed typical GPU texture limits (16384px)")
-            print(f"[SmartResCalc] WARNING: Dimensions {w_scaled}×{h_scaled} may exceed GPU limits")
+            logger.warning(f"Scaled dimensions {w_scaled:.1f}×{h_scaled:.1f} exceed typical GPU texture limits (16384px)")
+            print(f"[SmartResCalc] WARNING: Dimensions {int(w_scaled)}×{int(h_scaled)} may exceed GPU limits")
 
-        # Apply divisibility rounding
-        w = round(w_scaled / divisor) * divisor
-        h = round(h_scaled / divisor) * divisor
+        # Apply divisibility rounding (Python uses banker's rounding - rounds .5 to nearest even)
+        # This matches the behavior after fixing JavaScript tooltip to use banker's rounding
+        w = int(round(w_scaled / divisor) * divisor)
+        h = int(round(h_scaled / divisor) * divisor)
 
         # Recalculate megapixels after scaling and rounding
         mp = (w * h) / 1_000_000
@@ -488,10 +1168,23 @@ class SmartResolutionCalc:
 
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
-        info = f"Mode: {mode} | {info_detail} | Div: {div_info}"
 
-        # Prepend image source info if applicable
-        if mode_info:
+        # Calculate actual AR from final base dimensions (before scale/rounding)
+        # This shows the true aspect ratio regardless of calculation method
+        calculated_ar = self.format_aspect_ratio(w, h)
+
+        # Use calculator result for mode display
+        # The calculator already provides the complete mode description
+        mode_display = result['description']
+
+        logger.debug(f"Mode display from calculator: '{mode_display}' (priority={result['priority']}, mode={result['mode']}, conflicts={len(result['conflicts'])})")
+
+        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info}"
+
+        # Don't prepend mode_info since AR source is now integrated into mode display
+        # (mode_info was just "From Image (AR: X)" which is now part of the mode label)
+        if mode_info and exact_dims:
+            # Only prepend for Exact Dims mode since it has different info
             info = f"{mode_info} | {info}"
             # Add override warning if exact dims mode overrides manual settings
             if override_warning:

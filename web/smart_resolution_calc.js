@@ -10,6 +10,10 @@
  * - DazzleNodes mode: /extensions/DazzleNodes/smart-resolution-calc/
  */
 
+// Import modular components
+import { DimensionSourceManager } from './managers/dimension_source_manager.js';
+import { logger, visibilityLogger, dimensionLogger } from './utils/debug_logger.js';
+
 // Dynamic import helper for standalone vs DazzleNodes compatibility (Option A: Inline)
 async function importComfyCore() {
     const currentPath = import.meta.url;
@@ -34,74 +38,211 @@ async function importComfyCore() {
     const { app, TOOLTIP_CONTENT } = await importComfyCore();
 
 /**
- * Debug Logger - Multi-level logging
- *
- * Levels (from most to least verbose):
- * - VERBOSE: Detailed internal state (mouse events, hit areas, every step)
- * - DEBUG: Standard debugging (user actions, state changes)
- * - INFO: Important events (always shown when debug enabled)
- *
- * Enable debug: localStorage.setItem('DEBUG_SMART_RES_CALC', 'true')
- * Enable verbose: localStorage.setItem('VERBOSE_SMART_RES_CALC', 'true')
- * Disable: localStorage.removeItem('DEBUG_SMART_RES_CALC')
+ * Debug logging system
+ * DebugLogger class and instances now imported from ./utils/debug_logger.js
+ * See that file for usage documentation and configuration.
  */
-class DebugLogger {
-    constructor(name) {
-        this.name = name;
-        // Check localStorage OR URL parameter for debug/verbose mode
-        this.debugEnabled = localStorage.getItem('DEBUG_SMART_RES_CALC') === 'true' ||
-                           window.location.search.includes('debug=smart-res');
-        this.verboseEnabled = localStorage.getItem('VERBOSE_SMART_RES_CALC') === 'true' ||
-                             window.location.search.includes('verbose=smart-res');
 
-        if (this.verboseEnabled) {
-            console.log(`[${this.name}] Verbose mode enabled (includes all debug messages)`);
-        } else if (this.debugEnabled) {
-            console.log(`[${this.name}] Debug mode enabled`);
+/**
+ * Widget Value Validation System (v0.5.0)
+ *
+ * PURPOSE: Detect and prevent widget value corruption caused by serialization issues.
+ *
+ * ROOT CAUSE: ComfyUI serializes widget values by array index, but we manually position
+ * widgets during hide/show cycles. When widgets shift positions, their values get
+ * restored to the wrong widgets.
+ *
+ * CORRUPTION PATTERNS:
+ * - Index confusion: fill_type gets '1' (array index) instead of 'black' (value)
+ * - Cross-contamination: output_image_mode gets 'custom_color' (fill_type's value)
+ * - Position mismatch: Hidden widgets shift array indices during serialization
+ *
+ * STRATEGY:
+ * 1. Validate values before save (catch corruption at source)
+ * 2. Validate values after restore (catch corruption during load)
+ * 3. Log corruption with diagnostics (identify code paths)
+ * 4. Self-heal with defaults (prevent execution failures)
+ */
+
+// Widget validation schemas - defines valid values and defaults
+const WIDGET_SCHEMAS = {
+    output_image_mode: {
+        validValues: ["auto", "empty", "transform (distort)", "transform (crop/pad)",
+                     "transform (scale/crop)", "transform (scale/pad)"],
+        default: "auto",
+        description: "Image output mode"
+    },
+    fill_type: {
+        validValues: ["black", "white", "custom_color", "noise", "random"],
+        default: "black",
+        description: "Fill type for image transformations"
+    },
+    fill_color: {
+        default: "#522525",
+        validator: (v) => /^#?[0-9A-Fa-f]{6}$/.test(v),
+        description: "Custom fill color (hex format)"
+    },
+    batch_size: {
+        default: 1,
+        validator: (v) => typeof v === 'number' && !isNaN(v) && v >= 1 && Number.isInteger(v),
+        description: "Batch size (positive integer)"
+    },
+    scale: {
+        default: 1,
+        validator: (v) => typeof v === 'number' && !isNaN(v) && v > 0,
+        description: "Scale factor (positive number)"
+    },
+    divisible_by: {
+        validValues: ["8", "16", "32", "64"],
+        default: "16",
+        description: "Dimension divisibility constraint"
+    },
+    custom_ratio: {
+        default: false,
+        validator: (v) => typeof v === 'boolean',
+        description: "Whether to use custom aspect ratio"
+    },
+    dimension_megapixel: {
+        default: {on: false, value: 1},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 0.1 && v.value <= 100; // Reasonable megapixel range
+        },
+        description: "Dimension megapixel control (object with on/value)"
+    },
+    dimension_width: {
+        default: {on: false, value: 1024},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 64 && v.value <= 16384; // Reasonable pixel range
+        },
+        description: "Dimension width control (object with on/value)"
+    },
+    dimension_height: {
+        default: {on: false, value: 1024},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 64 && v.value <= 16384; // Reasonable pixel range
+        },
+        description: "Dimension height control (object with on/value)"
+    }
+};
+
+/**
+ * Validates a widget value against its schema
+ *
+ * @param {string} widgetName - Name of widget to validate
+ * @param {*} value - Value to validate
+ * @param {string} context - Context string for logging (e.g., "save" or "restore")
+ * @returns {{valid: boolean, correctedValue: *, warnings: string[]}} Validation result
+ */
+function validateWidgetValue(widgetName, value, context = "unknown") {
+    const schema = WIDGET_SCHEMAS[widgetName];
+    const warnings = [];
+
+    // No schema = no validation (allow value as-is)
+    if (!schema) {
+        return { valid: true, correctedValue: value, warnings };
+    }
+
+    // Check for object values (corruption pattern for widgets that should have primitives)
+    // BUT: Some widgets (like DimensionWidgets) legitimately have object values
+    const schemaExpectsObject = typeof schema.default === 'object' && schema.default !== null;
+
+    if (typeof value === 'object' && value !== null && !schemaExpectsObject) {
+        // Object value for a widget that should have primitive value = corruption
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has object value (should be primitive)`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value type: ${typeof value}`);
+        warnings.push(`   Value: ${JSON.stringify(value)}`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Object corruption in ${widgetName}:`, value);
+        return { valid: false, correctedValue: schema.default, warnings };
+    }
+
+    // Check for index confusion (number when should be string)
+    if (schema.validValues && typeof value === 'number') {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has numeric value (index confusion?)`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: ${value} (type: ${typeof value})`);
+        warnings.push(`   Expected type: string`);
+        warnings.push(`   Valid values: [${schema.validValues.join(', ')}]`);
+
+        // Attempt recovery: if value is valid index, use that array element
+        if (value >= 0 && value < schema.validValues.length) {
+            const corrected = schema.validValues[value];
+            warnings.push(`   🔧 Self-healing: Interpreting ${value} as index → "${corrected}"`);
+            visibilityLogger.error(`[Validation-${context}] Index confusion in ${widgetName}: ${value} → ${corrected}`);
+            return { valid: false, correctedValue: corrected, warnings };
+        } else {
+            warnings.push(`   🔧 Self-healing: Index ${value} out of range, using default "${schema.default}"`);
+            visibilityLogger.error(`[Validation-${context}] Invalid index in ${widgetName}: ${value}`);
+            return { valid: false, correctedValue: schema.default, warnings };
         }
     }
 
-    // VERBOSE: Detailed internal state (mouse coords, hit areas, serialization)
-    verbose(...args) {
-        if (this.verboseEnabled) {
-            console.log(`[${this.name}] VERBOSE:`, ...args);
-        }
+    // Check if value in valid set (for enum-like widgets)
+    if (schema.validValues && !schema.validValues.includes(value)) {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has invalid value`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: "${value}"`);
+        warnings.push(`   Valid values: [${schema.validValues.join(', ')}]`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Invalid value in ${widgetName}: "${value}"`);
+        return { valid: false, correctedValue: schema.default, warnings };
     }
 
-    // DEBUG: Standard debugging (user actions, state changes)
-    debug(...args) {
-        if (this.debugEnabled || this.verboseEnabled) {
-            console.log(`[${this.name}]`, ...args);
-        }
+    // Check custom validator (for non-enum values like fill_color)
+    if (schema.validator && !schema.validator(value)) {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} failed validation`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: "${value}"`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Validation failed for ${widgetName}: "${value}"`);
+        return { valid: false, correctedValue: schema.default, warnings };
     }
 
-    // INFO: Important events (always shown when debug enabled)
-    info(...args) {
-        if (this.debugEnabled || this.verboseEnabled) {
-            console.log(`[${this.name}]`, ...args);
-        }
-    }
-
-    // ERROR: Always shown
-    error(...args) {
-        console.error(`[${this.name}] ERROR:`, ...args);
-    }
-
-    group(label) {
-        if (this.debugEnabled || this.verboseEnabled) console.group(`[${this.name}] ${label}`);
-    }
-
-    groupEnd() {
-        if (this.debugEnabled || this.verboseEnabled) console.groupEnd();
-    }
+    // Value is valid
+    return { valid: true, correctedValue: value, warnings };
 }
 
-const logger = new DebugLogger('SmartResCalc');
-const visibilityLogger = new DebugLogger('SmartResCalc:Visibility');
+/**
+ * Logs corruption diagnostics to console (visible to users and developers)
+ *
+ * @param {string[]} warnings - Array of warning messages
+ * @param {object} context - Additional context for debugging
+ */
+function logCorruptionDiagnostics(warnings, context = {}) {
+    if (warnings.length === 0) return;
 
-// Expose loggers globally for debugging
-window.smartResCalcLogger = logger;
-window.smartResCalcVisibilityLogger = visibilityLogger;
+    console.group('🚨 WIDGET CORRUPTION DETECTED - Smart Resolution Calculator');
+    console.error('═'.repeat(80));
+    warnings.forEach(msg => console.error(msg));
+
+    if (Object.keys(context).length > 0) {
+        console.error('');
+        console.error('Additional Context:');
+        Object.keys(context).forEach(key => {
+            console.error(`   ${key}: ${JSON.stringify(context[key])}`);
+        });
+    }
+
+    console.error('═'.repeat(80));
+    console.error('Stack trace for debugging:');
+    console.trace();
+    console.error('═'.repeat(80));
+    console.error('');
+    console.error('💡 This self-healed automatically with default values.');
+    console.error('💡 Please report this to the developer with the above information.');
+    console.error('💡 GitHub: https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/issues/8');
+    console.groupEnd();
+}
 
 /**
  * Toggle Behavior Modes
@@ -705,6 +846,10 @@ class ScaleWidget {
         this.isHovering = false;
         this.tooltipTimeout = null;
 
+        // Double-click detection for reset to 1.0x
+        this.lastClickTime = 0;
+        this.doubleClickThreshold = 300; // milliseconds
+
         // Hit areas
         this.hitAreas = {
             slider: { x: 0, y: 0, width: 0, height: 0 },
@@ -767,165 +912,32 @@ class ScaleWidget {
 
     /**
      * Calculate preview dimensions for tooltip
+     * Uses DimensionSourceManager for centralized dimension calculation (calls Python API)
      */
-    calculatePreview(node) {
-        // Check if we should fetch image dimensions (if USE_IMAGE enabled but cache empty)
-        const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
-        const useImage = imageModeWidget?.value?.on;
-
-        if (useImage && !this.imageDimensionsCache && !this.fetchingDimensions) {
-            // Trigger async fetch (won't block, but will populate cache for next time)
-            logger.verbose('Scale preview: cache empty, triggering dimension fetch');
-            this.refreshImageDimensions(node);
-        }
-
-        // Get current dimension values from the node's other widgets
-        const mpWidget = node.widgets.find(w => w.name === "dimension_megapixel");
-        const widthWidget = node.widgets.find(w => w.name === "dimension_width");
-        const heightWidget = node.widgets.find(w => w.name === "dimension_height");
-        const aspectRatioWidget = node.widgets.find(w => w.name === "aspect_ratio");
-
-        if (!mpWidget || !widthWidget || !heightWidget) {
+    async calculatePreview(node) {
+        // Get dimension source from manager (handles all 6 priority levels)
+        if (!node.dimensionSourceManager) {
+            logger.warn('[ScaleWidget] DimensionSourceManager not initialized');
             return null;
         }
 
-        // Check for custom ratio first (takes precedence over dropdown)
-        const customRatioToggle = node.widgets.find(w => w.name === "custom_ratio");
-        const customRatioText = node.widgets.find(w => w.name === "custom_aspect_ratio");
-
-        let aspectW = 16, aspectH = 9;
-        let aspectRatio;
-
-        if (customRatioToggle && customRatioToggle.value && customRatioText && customRatioText.value) {
-            // Custom ratio enabled - parse custom_aspect_ratio (supports floats like "2.39:1")
-            const customMatch = customRatioText.value.match(/([\d.]+):([\d.]+)/);
-            if (customMatch) {
-                aspectW = parseFloat(customMatch[1]);
-                aspectH = parseFloat(customMatch[2]);
-                aspectRatio = aspectW / aspectH;
-                logger.debug(`[ScaleWidget] Using custom aspect ratio: ${aspectW}:${aspectH} = ${aspectRatio.toFixed(3)}`);
-            } else {
-                // Invalid custom ratio - fall back to dropdown
-                logger.debug(`[ScaleWidget] Invalid custom ratio "${customRatioText.value}", falling back to dropdown`);
-                const match = aspectRatioWidget?.value?.match(/(\d+):(\d+)/);
-                if (match) {
-                    aspectW = parseInt(match[1]);
-                    aspectH = parseInt(match[2]);
-                }
-                aspectRatio = aspectW / aspectH;
-            }
-        } else {
-            // Custom ratio not enabled - use dropdown aspect ratio
-            if (aspectRatioWidget && aspectRatioWidget.value) {
-                const match = aspectRatioWidget.value.match(/(\d+):(\d+)/);
-                if (match) {
-                    aspectW = parseInt(match[1]);
-                    aspectH = parseInt(match[2]);
-                }
-            }
-            aspectRatio = aspectW / aspectH;
+        // Pass runtime context including image dimensions cache
+        // TEMPORARILY DISABLED: Debug logging (testing canvas corruption)
+        if (dimensionLogger.debugEnabled) {
+            dimensionLogger.debug('[CACHE] imageDimensionsCache:', this.imageDimensionsCache);
+            dimensionLogger.debug('[CACHE] Passing to manager:', {imageDimensionsCache: this.imageDimensionsCache});
+        }
+        const dimSource = await node.dimensionSourceManager.getActiveDimensionSource(false, {
+            imageDimensionsCache: this.imageDimensionsCache
+        });
+        if (!dimSource) {
+            logger.warn('[ScaleWidget] DimensionSourceManager returned null');
+            return null;
         }
 
-        // Determine calculation mode and base dimensions
-        let baseW, baseH, baseMp;
-        const useMp = mpWidget.value.on;
-        const useWidth = widthWidget.value.on;
-        const useHeight = heightWidget.value.on;
-
-        // Check if we should use cached image dimensions
-        const imageModeWidgetForCache = node.widgets?.find(w => w.name === "image_mode");
-        const useImageForCache = imageModeWidgetForCache?.value?.on;
-        const imageMode = imageModeWidgetForCache?.value?.value; // 0=AR Only, 1=Exact Dims
-
-        logger.verbose(`[ScaleWidget] calculatePreview: USE_IMAGE=${useImageForCache}, mode=${imageMode === 0 ? 'AR Only' : imageMode === 1 ? 'Exact Dims' : 'unknown'}, cache=${this.imageDimensionsCache ? 'populated' : 'empty'}`);
-
-        if (useImageForCache && this.imageDimensionsCache) {
-            if (imageMode === 1) {
-                // Exact Dims mode - use raw image dimensions (ignore all user settings)
-                baseW = this.imageDimensionsCache.width;
-                baseH = this.imageDimensionsCache.height;
-                logger.info(`✓ Scale preview using exact image dimensions: ${baseW}×${baseH}`);
-            } else {
-                // AR Only mode (imageMode === 0) - extract AR and use with user's dimension settings
-                const imageAR = this.imageDimensionsCache.width / this.imageDimensionsCache.height;
-
-                // Validate AR before use
-                if (isNaN(imageAR) || !isFinite(imageAR) || imageAR <= 0) {
-                    logger.debug(`[ScaleWidget] Invalid image AR (${imageAR}), falling back to widget calculation`);
-                    // Clear cache temporarily to trigger fallback
-                    const savedCache = this.imageDimensionsCache;
-                    this.imageDimensionsCache = null;
-                    // Will fall through to widget-based calculation below
-                    // Restore cache after (for next time)
-                    setTimeout(() => { this.imageDimensionsCache = savedCache; }, 0);
-                } else {
-                    // Use image AR with user's dimension settings
-                    logger.debug(`[ScaleWidget] AR Only mode - using image AR: ${imageAR.toFixed(3)}`);
-
-                    if (useWidth && useHeight) {
-                        // Both W+H specified - use as-is (ignore AR)
-                        baseW = widthWidget.value.value;
-                        baseH = heightWidget.value.value;
-                        logger.verbose(`[ScaleWidget] Using user WIDTH+HEIGHT: ${baseW}×${baseH}`);
-                    } else if (useWidth) {
-                        // Width specified - calculate height from image AR
-                        baseW = widthWidget.value.value;
-                        baseH = Math.round(baseW / imageAR);
-                        logger.verbose(`[ScaleWidget] Computed HEIGHT from WIDTH ${baseW} ÷ AR ${imageAR.toFixed(3)} = ${baseH}`);
-                    } else if (useHeight) {
-                        // Height specified - calculate width from image AR
-                        baseH = heightWidget.value.value;
-                        baseW = Math.round(baseH * imageAR);
-                        logger.verbose(`[ScaleWidget] Computed WIDTH from HEIGHT ${baseH} × AR ${imageAR.toFixed(3)} = ${baseW}`);
-                    } else if (useMp) {
-                        // Megapixel mode - calculate from MP and image AR
-                        const targetMp = mpWidget.value.value * 1_000_000;
-                        baseH = Math.sqrt(targetMp / imageAR);
-                        baseW = baseH * imageAR;
-                        logger.verbose(`[ScaleWidget] Computed from MP ${mpWidget.value.value} and AR ${imageAR.toFixed(3)}: ${Math.round(baseW)}×${Math.round(baseH)}`);
-                    } else {
-                        // No settings enabled - use raw image dimensions as fallback
-                        baseW = this.imageDimensionsCache.width;
-                        baseH = this.imageDimensionsCache.height;
-                        logger.verbose(`[ScaleWidget] No dimension settings, using raw image dimensions: ${baseW}×${baseH}`);
-                    }
-
-                    logger.info(`✓ Scale preview using image AR (${imageAR.toFixed(2)}) with user settings: ${Math.round(baseW)}×${Math.round(baseH)}`);
-                }
-            }
-        }
-
-        if (!useImageForCache || !this.imageDimensionsCache) {
-            // Widget-based calculation (fallback when no image or cache empty)
-            if (useImageForCache && !this.imageDimensionsCache) {
-                logger.debug(`[ScaleWidget] Cache empty, falling back to widget-based calculation`);
-            }
-            // Calculate base dimensions with proper aspect ratio handling (existing logic)
-            if (useWidth && useHeight) {
-                // Both W+H specified - use as-is
-                baseW = widthWidget.value.value;
-                baseH = heightWidget.value.value;
-            } else if (useWidth) {
-                // Width specified - calculate height from aspect ratio
-                baseW = widthWidget.value.value;
-                baseH = Math.round(baseW / aspectRatio);
-            } else if (useHeight) {
-                // Height specified - calculate width from aspect ratio
-                baseH = heightWidget.value.value;
-                baseW = Math.round(baseH * aspectRatio);
-            } else if (useMp) {
-                // Megapixel mode - calculate dimensions from MP and aspect ratio
-                const targetMp = mpWidget.value.value * 1_000_000;
-                baseH = Math.sqrt(targetMp / aspectRatio);
-                baseW = baseH * aspectRatio;
-            } else {
-                // Default mode - use 1920x1080
-                baseW = 1920;
-                baseH = 1080;
-            }
-        }
-
-        baseMp = (baseW * baseH) / 1_000_000;
+        const baseW = dimSource.baseW;
+        const baseH = dimSource.baseH;
+        const baseMp = (baseW * baseH) / 1_000_000;
 
         // Apply scale
         const scaledW = Math.round(baseW * this.value);
@@ -938,9 +950,21 @@ class ScaleWidget {
             divisor = divisibleWidget.value === "Exact" ? 1 : parseInt(divisibleWidget.value);
         }
 
-        // Apply divisibility
-        const finalW = Math.round(scaledW / divisor) * divisor;
-        const finalH = Math.round(scaledH / divisor) * divisor;
+        // Apply divisibility using banker's rounding (matches Python behavior)
+        // Banker's rounding: round .5 to nearest even number
+        // This ensures JavaScript tooltip matches Python execution output
+        const bankersRound = (n) => {
+            const rounded = Math.round(n);
+            const diff = Math.abs(n - Math.floor(n) - 0.5);
+            // If exactly .5, round to even
+            if (diff < 1e-10) {
+                return (rounded % 2 === 0) ? rounded : rounded - Math.sign(n);
+            }
+            return rounded;
+        };
+
+        const finalW = bankersRound(scaledW / divisor) * divisor;
+        const finalH = bankersRound(scaledH / divisor) * divisor;
         const finalMp = (finalW * finalH) / 1_000_000;
 
         return {
@@ -948,7 +972,13 @@ class ScaleWidget {
             scaledW, scaledH,
             finalW, finalH, finalMp,
             divisor,
-            aspectW, aspectH  // Include AR for tooltip display
+            aspectW: dimSource.ar.aspectW,
+            aspectH: dimSource.ar.aspectH,
+            // Include dimension source metadata for enhanced tooltip
+            mode: dimSource.mode,
+            priority: dimSource.priority,
+            description: dimSource.description,
+            conflicts: dimSource.conflicts
         };
     }
 
@@ -957,10 +987,15 @@ class ScaleWidget {
      * Called when image connected/disconnected or USE_IMAGE toggled
      */
     async refreshImageDimensions(node) {
+        dimensionLogger.debug('[REFRESH] refreshImageDimensions called');
+
         // Check if USE_IMAGE is enabled
         const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
+        dimensionLogger.verbose('[REFRESH] imageModeWidget:', imageModeWidget);
+        dimensionLogger.verbose('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
+            // dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
             logger.verbose('USE_IMAGE disabled, clearing dimension cache');
             return;
         }
@@ -968,8 +1003,11 @@ class ScaleWidget {
         // Get connected image node
         const imageInput = node.inputs?.find(inp => inp.name === "image");
         const link = imageInput?.link;
+        dimensionLogger.verbose('[REFRESH] imageInput:', imageInput);
+        dimensionLogger.verbose('[REFRESH] link:', link);
         if (!link) {
             this.imageDimensionsCache = null;
+            // dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
             logger.verbose('No image connected, clearing dimension cache');
             return;
         }
@@ -977,32 +1015,41 @@ class ScaleWidget {
         // Get source node from link
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
+        dimensionLogger.verbose('[REFRESH] sourceNode:', sourceNode);
         if (!sourceNode) {
             this.imageDimensionsCache = null;
+            // dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
             logger.verbose('Source node not found, clearing dimension cache');
             return;
         }
 
         // Check cache validity (same image path)
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
+        dimensionLogger.debug('[REFRESH] filePath:', filePath);
+        dimensionLogger.verbose('[REFRESH] Current cache:', this.imageDimensionsCache);
         if (this.imageDimensionsCache?.path === filePath && filePath) {
+            // dimensionLogger.debug('[REFRESH] Using cached dimensions for:', filePath);
             logger.verbose(`Using cached dimensions for ${filePath}`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
+            // dimensionLogger.debug('[REFRESH] Already fetching, skipping');
             logger.verbose('Already fetching dimensions, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
+        dimensionLogger.debug('[REFRESH] Starting hybrid fetch strategy');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
             if (filePath) {
+                // dimensionLogger.debug('[REFRESH] Tier 1: Attempting server endpoint for:', filePath);
                 logger.debug(`[ScaleWidget] Attempting server endpoint for: ${filePath}`);
                 const dims = await ImageDimensionUtils.fetchDimensionsFromServer(filePath);
+                // dimensionLogger.verbose('[REFRESH] Server response:', dims);
                 logger.debug(`[ScaleWidget] Server response:`, dims);
                 if (dims?.success) {
                     this.imageDimensionsCache = {
@@ -1011,18 +1058,28 @@ class ScaleWidget {
                         timestamp: Date.now(),
                         path: filePath
                     };
+                    // dimensionLogger.debug('[REFRESH] ✓ Cached from server:', dims.width, 'x', dims.height);
                     logger.info(`✓ Cached image dimensions from server: ${dims.width}×${dims.height}`);
+
+                    // Invalidate dimension source cache when image dimensions change
+                    node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+
                     node.setDirtyCanvas(true, true);
                     return;
                 }
+                // dimensionLogger.debug('[REFRESH] Server endpoint failed or returned no data');
                 logger.debug('[ScaleWidget] Server endpoint returned no data or failed');
             } else {
+                // dimensionLogger.debug('[REFRESH] No file path (not a LoadImage node?)');
                 logger.debug('[ScaleWidget] No file path found (not a LoadImage node?)');
             }
 
             // Tier 2: Info parsing (cached execution output)
+            // dimensionLogger.debug('[REFRESH] Tier 2: Attempting info parsing');
             logger.verbose('Attempting info parsing for cached dimensions');
             const cachedDims = ImageDimensionUtils.parseDimensionsFromInfo(node);
+            // dimensionLogger.verbose('[REFRESH] Info parsing result:', cachedDims);
             if (cachedDims) {
                 this.imageDimensionsCache = {
                     width: cachedDims.width,
@@ -1030,18 +1087,27 @@ class ScaleWidget {
                     timestamp: Date.now(),
                     path: filePath
                 };
+                // dimensionLogger.debug('[REFRESH] ✓ Cached from info:', cachedDims.width, 'x', cachedDims.height);
                 logger.debug(`✓ Cached image dimensions from info: ${cachedDims.width}×${cachedDims.height}`);
+
+                // Invalidate dimension source cache when image dimensions change
+                node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+
                 node.setDirtyCanvas(true, true);
                 return;
             }
+            // dimensionLogger.debug('[REFRESH] Info parsing found no dimensions');
             logger.verbose('Info parsing found no dimensions');
 
             // Tier 3: Clear cache (will fallback to widget values in calculatePreview)
+            // dimensionLogger.debug('[REFRESH] Tier 3: No dimensions available, clearing cache');
             logger.verbose('No dimensions available from any source, clearing cache');
             this.imageDimensionsCache = null;
 
         } finally {
             this.fetchingDimensions = false;
+            // dimensionLogger.verbose('[REFRESH] Fetch complete, fetchingDimensions = false');
         }
     }
 
@@ -1157,10 +1223,26 @@ class ScaleWidget {
 
         // Draw tooltip when hovering or dragging (and not at 1.0)
         if ((this.isHovering || this.isDragging) && !isNeutral) {
-            const preview = this.calculatePreview(node);
-            if (preview) {
-                this.drawTooltip(ctx, y + height, width, preview);
+            // Start async calculation if not already in progress
+            if (!this.calculatingPreview) {
+                this.calculatingPreview = true;
+                this.calculatePreview(node).then(preview => {
+                    this.cachedPreview = preview;
+                    this.calculatingPreview = false;
+                    // Trigger redraw to show tooltip
+                    node.setDirtyCanvas(true, false);
+                }).catch(err => {
+                    logger.error('[ScaleWidget] Preview calculation failed:', err);
+                    this.calculatingPreview = false;
+                });
             }
+            // Draw cached preview if available
+            if (this.cachedPreview) {
+                this.drawTooltip(ctx, y + height, width, this.cachedPreview);
+            }
+        } else {
+            // Clear cache when not hovering
+            this.cachedPreview = null;
         }
 
         // Draw settings gear icon at far right
@@ -1188,7 +1270,159 @@ class ScaleWidget {
     }
 
     /**
+     * Get simplified mode label for tooltip (shows sources, not values)
+     * Uses activeSources array from DimensionSourceManager for accurate widget detection (Bug 2 fix)
+     * @param {Object} dimSource - Complete dimension source object from DimensionSourceManager
+     * @param {string} dimSource.mode - Mode identifier (e.g., "height_ar", "mp_width_explicit")
+     * @param {string} dimSource.description - Full description text
+     * @param {string[]} [dimSource.activeSources] - Array of enabled dimension widgets (e.g., ['WIDTH', 'MEGAPIXEL'])
+     * @returns {string} Simplified label (e.g., "WIDTH & MEGAPIXEL")
+     */
+    /**
+     * Calculate Greatest Common Divisor for ratio simplification
+     */
+    _gcd(a, b) {
+        a = Math.abs(Math.round(a));
+        b = Math.abs(Math.round(b));
+        while (b !== 0) {
+            const temp = b;
+            b = a % b;
+            a = temp;
+        }
+        return a;
+    }
+
+    /**
+     * Calculate simplified aspect ratio from width and height
+     */
+    _getSimplifiedRatio(width, height) {
+        if (!width || !height || width <= 0 || height <= 0) {
+            return null;
+        }
+
+        const gcd = this._gcd(width, height);
+        const ratioW = width / gcd;
+        const ratioH = height / gcd;
+
+        // If ratio doesn't simplify nicely (e.g., 1000:999), show full values if reasonable
+        if (gcd === 1 && (ratioW > 100 || ratioH > 100)) {
+            return `${width}:${height}`;
+        }
+
+        return `${ratioW}:${ratioH}`;
+    }
+
+    /**
+     * Get AR ratio string - prefers exact AR from Python API over calculated
+     */
+    _getARRatio(dimSource) {
+        // Prefer exact AR from Python API (avoids rounding errors)
+        if (dimSource.ar && dimSource.ar.aspectW && dimSource.ar.aspectH) {
+            return `${dimSource.ar.aspectW}:${dimSource.ar.aspectH}`;
+        }
+
+        // Fallback: Calculate from baseW/baseH
+        if (dimSource.baseW && dimSource.baseH) {
+            return this._getSimplifiedRatio(dimSource.baseW, dimSource.baseH);
+        }
+
+        return null;
+    }
+
+    getSimplifiedModeLabel(dimSource) {
+        const { mode, description, activeSources, baseW, baseH } = dimSource;
+
+        // Check for special modes first
+        if (description.includes('Exact Dims') || description.includes('exact image')) {
+            // Add AR ratio for exact dims too
+            const ratio = this._getARRatio(dimSource);
+            return ratio ? `IMG Exact Dims (${ratio})` : 'IMG Exact Dims';
+        }
+
+        // Check for AR Only mode (Priority 4)
+        if (mode === 'ar_only') {
+            // Extract dimension source from description
+            const dimensionSource = description.split(' & ')[0]; // "HEIGHT", "WIDTH", "MEGAPIXEL", or "defaults"
+            const ratio = this._getARRatio(dimSource);
+            return ratio ? `${dimensionSource} & IMG AR Only (${ratio})` : `${dimensionSource} & IMG AR Only`;
+        }
+
+        // Use activeSources array if available (Bug 2 fix - avoids string parsing issues)
+        if (activeSources && activeSources.length > 0) {
+            const sources = [...activeSources];
+
+            // Check for AR sources (fallback to string parsing for AR since not in activeSources)
+            if (description.includes('custom_ratio') || description.includes('Custom')) {
+                sources.push('custom_ratio');
+            } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
+                sources.push('image_ar');
+            } else if (description.includes('dropdown') || description.includes('Dropdown')) {
+                sources.push('aspect_ratio');
+            }
+
+            // Check for defaults
+            if (description.includes('Default') || description.includes('default')) {
+                sources.push('defaults');
+            }
+
+            let label = sources.join(' & ');
+
+            // ALWAYS add AR ratio using exact AR from Python when available
+            const ratio = this._getARRatio(dimSource);
+            if (ratio) {
+                label = `${label} (${ratio})`;
+            }
+
+            return label;
+        }
+
+        // Fallback: Extract active sources from description (backward compatibility)
+        const sources = [];
+
+        // Check for dimension widgets (removed 'H computed' check - Bug 2 fix)
+        if (description.includes('WIDTH') || description.includes('W:') || description.includes('W+')) {
+            sources.push('WIDTH');
+        }
+        if (description.includes('HEIGHT') || description.includes('H:') || description.includes('H+')) {
+            sources.push('HEIGHT');
+        }
+        if (description.includes('MP') || description.includes('megapixel')) {
+            sources.push('MEGAPIXEL');
+        }
+
+        // Check for AR sources
+        if (description.includes('custom_ratio') || description.includes('Custom')) {
+            sources.push('custom_ratio');
+        } else if (description.includes('image_ar') || description.includes('image AR') || description.includes('Image AR')) {
+            sources.push('image_ar');
+        } else if (description.includes('dropdown') || description.includes('Dropdown')) {
+            sources.push('aspect_ratio');
+        }
+
+        // Check for defaults
+        if (description.includes('Default') || description.includes('default')) {
+            sources.push('defaults');
+        }
+
+        // Build label
+        if (sources.length === 0) {
+            return null; // No clear sources identified
+        }
+
+        let label = sources.join(' & ');
+
+        // ALWAYS add AR ratio using exact AR from Python when available
+        const ratio = this._getARRatio(dimSource);
+        if (ratio) {
+            label = `${label} (${ratio})`;
+        }
+
+        return label;
+    }
+
+    /**
      * Draw preview tooltip below the widget
+     * Shows dimension source mode, calculations, and conflicts
      */
     drawTooltip(ctx, startY, width, preview) {
         const margin = 15;
@@ -1202,28 +1436,69 @@ class ScaleWidget {
             ? `${preview.aspectW}:${preview.aspectH}`
             : 'unknown';
 
-        // Tooltip content
+        // Build tooltip content
         const lines = [
             `Scale: ${this.value.toFixed(2)}x`,
-            `━━━━━━━━━━━━━━━━━━━━━━━━`,
-            `Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`,
-            `  ↓`,
-            `Scaled: ${preview.scaledW} × ${preview.scaledH}`,
-            `After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`
+            `━━━━━━━━━━━━━━━━━━━━━━━━`
         ];
 
-        // Measure text width to ensure tooltip background fits all content
+        // Note: Mode line removed - now shown in dedicated mode_status widget above aspect_ratio
+
+        // Add dimension calculations
+        lines.push(`Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`);
+        lines.push(`  ↓`);
+        lines.push(`Scaled: ${preview.scaledW} × ${preview.scaledH}`);
+        lines.push(`After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`);
+
+        // Measure text width BEFORE adding conflicts to determine max tooltip width
         ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
-        let maxTextWidth = 0;
+        let maxTooltipWidth = 0;
         lines.forEach(line => {
             const textWidth = ctx.measureText(line).width;
-            if (textWidth > maxTextWidth) {
-                maxTextWidth = textWidth;
+            if (textWidth > maxTooltipWidth) {
+                maxTooltipWidth = textWidth;
             }
         });
 
-        // Calculate tooltip dimensions with dynamic width
-        const tooltipWidth = Math.min(maxTextWidth + padding * 2, width - margin * 2);
+        // Add conflict warnings with proper word wrapping
+        if (preview.conflicts && preview.conflicts.length > 0) {
+            lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━`);
+            lines.push(`⚠️  Conflicts detected:`);
+
+            preview.conflicts.forEach(conflict => {
+                const msg = conflict.message || conflict;
+                const indent = '    '; // 4 spaces for indentation
+                const maxLineWidth = 500; // Maximum width in pixels for wrapped lines
+
+                // Measure and wrap based on actual pixel width, not character count
+                const words = msg.split(' ');
+                let currentLine = indent;
+
+                words.forEach((word, index) => {
+                    const testLine = index === 0 ? indent + word : currentLine + ' ' + word;
+                    const testWidth = ctx.measureText(testLine).width;
+
+                    if (testWidth > maxLineWidth && currentLine !== indent) {
+                        // Line too long, push current line and start new one
+                        lines.push(currentLine);
+                        maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
+                        currentLine = indent + word;
+                    } else {
+                        // Add word to current line
+                        currentLine = testLine;
+                    }
+                });
+
+                // Push final line
+                if (currentLine.trim()) {
+                    lines.push(currentLine);
+                    maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
+                }
+            });
+        }
+
+        // Calculate tooltip dimensions with dynamic width (allow tooltip to extend beyond node)
+        const tooltipWidth = maxTooltipWidth + padding * 2;
         const tooltipHeight = lines.length * lineHeight + padding * 2;
 
         // Draw tooltip background
@@ -1232,8 +1507,8 @@ class ScaleWidget {
         ctx.roundRect(margin, startY + 4, tooltipWidth, tooltipHeight, 4);
         ctx.fill();
 
-        // Draw tooltip border
-        ctx.strokeStyle = "#4CAF50";
+        // Draw tooltip border (change to orange if conflicts present)
+        ctx.strokeStyle = (preview.conflicts && preview.conflicts.length > 0) ? "#ff9800" : "#4CAF50";
         ctx.lineWidth = 1;
         ctx.stroke();
 
@@ -1252,9 +1527,21 @@ class ScaleWidget {
                 ctx.fillText(line, margin + padding, textY);
                 ctx.font = "11px monospace";
                 ctx.fillStyle = "#ffffff";
-            } else if (index === 1) {
+            } else if (line.startsWith('━')) {
                 // Separator line
                 ctx.fillStyle = "#666666";
+                ctx.fillText(line, margin + padding, textY);
+                ctx.fillStyle = "#ffffff";
+            } else if (line.startsWith('⚠️')) {
+                // Conflict header - highlight in orange
+                ctx.fillStyle = "#ff9800";
+                ctx.font = "bold 11px monospace";
+                ctx.fillText(line, margin + padding, textY);
+                ctx.font = "11px monospace";
+                ctx.fillStyle = "#ffffff";
+            } else if (line.startsWith('  ') && preview.conflicts && preview.conflicts.length > 0) {
+                // Conflict message - show in lighter orange
+                ctx.fillStyle = "#ffb74d";
                 ctx.fillText(line, margin + padding, textY);
                 ctx.fillStyle = "#ffffff";
             } else {
@@ -1486,10 +1773,25 @@ class ScaleWidget {
 
             // Check slider/handle click
             if (this.isInBounds(pos, this.hitAreas.slider) || this.isInBounds(pos, this.hitAreas.handle)) {
-                this.isDragging = true;
-                this.updateValueFromMouse(pos);
-                node.setDirtyCanvas(true);
-                return true;
+                // Double-click detection - reset to 1.0x
+                const currentTime = Date.now();
+                const timeSinceLastClick = currentTime - this.lastClickTime;
+
+                if (timeSinceLastClick < this.doubleClickThreshold) {
+                    // Double-click detected - reset to 1.0x
+                    this.value = 1.0;
+                    this.lastClickTime = 0; // Reset to prevent triple-click
+                    node.setDirtyCanvas(true);
+                    logger.info(`[ScaleWidget] Double-click detected - reset to 1.0x`);
+                    return true;
+                } else {
+                    // Single click - start dragging
+                    this.lastClickTime = currentTime;
+                    this.isDragging = true;
+                    this.updateValueFromMouse(pos);
+                    node.setDirtyCanvas(true);
+                    return true;
+                }
             }
         }
 
@@ -1601,6 +1903,325 @@ class ScaleWidget {
     serializeValue(node, index) {
         logger.debug(`serializeValue called: ${this.name} (index ${index}) = ${this.value}, steps: ${this.leftStep}/${this.rightStep}`);
         return this.value;  // Return float for Python, config stored elsewhere
+    }
+}
+
+/**
+ * Mode Status Widget - Read-only display showing current dimension calculation mode
+ * Positioned above aspect_ratio to provide at-a-glance mode visibility
+ *
+ * Performance optimizations:
+ * - Caches text truncation to avoid ctx.measureText() loops at 60fps
+ * - Uses ctx.roundRect() when available for simpler drawing
+ * - Only recalculates displayText when value changes
+ */
+class ModeStatusWidget {
+    constructor(name = "mode_status") {
+        this.name = name;
+        this.type = "custom";
+        this.value = "Calculating...";  // Default text
+        this.conflicts = [];  // NEW: Conflict array from Python API
+        this._cachedDisplayText = null;  // Cached truncated text
+        this._lastValue = null;           // Last value used for cache
+        this._lastMaxWidth = null;        // Last max width used for cache
+
+        // Native ComfyUI tooltip (shows on hover)
+        this.tooltip = "Shows current dimension calculation mode (updated automatically, read-only)";
+
+        // NEW: Mouse interaction state for tooltip
+        this.isHoveringStatus = false; // Hovering over status text (for conflicts)
+        this.tooltipTimeout = null;
+        this.lastY = 0;  // Store widget Y position for hit testing
+        this.lastHeight = 0;
+        this.lastLabelWidth = 0;
+
+        // Styling
+        this.bgColor = "#2a2a2a";
+        this.textColor = "#aaaaaa";
+        this.borderColor = "#3a3a3a";
+    }
+
+    /**
+     * Calculate truncated text (cached to avoid expensive measureText loops)
+     */
+    _getTruncatedText(ctx, text, maxWidth) {
+        // Return cached value if nothing changed
+        if (text === this._lastValue && maxWidth === this._lastMaxWidth && this._cachedDisplayText) {
+            return this._cachedDisplayText;
+        }
+
+        // Calculate truncation
+        let displayText = text || "Unknown";
+        ctx.font = "12px monospace";  // Ensure font is set for measurement
+        const textWidth = ctx.measureText(displayText).width;
+
+        if (textWidth > maxWidth) {
+            // Binary search for optimal truncation point (faster than while loop)
+            let low = 0;
+            let high = displayText.length;
+            let bestFit = 0;
+
+            while (low <= high) {
+                const mid = Math.floor((low + high) / 2);
+                const testText = displayText.substring(0, mid) + "...";
+                const testWidth = ctx.measureText(testText).width;
+
+                if (testWidth <= maxWidth) {
+                    bestFit = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+
+            displayText = displayText.substring(0, bestFit) + "...";
+        }
+
+        // Cache result
+        this._cachedDisplayText = displayText;
+        this._lastValue = text;
+        this._lastMaxWidth = maxWidth;
+
+        return displayText;
+    }
+
+    draw(ctx, node, width, y, height) {
+        ctx.save();
+
+        const x = 15;  // Standard widget left margin
+        const displayHeight = 24;
+        const rectWidth = width - 30;
+
+        // Store Y position and dimensions for hit testing
+        this.lastY = y;
+        this.lastHeight = displayHeight;
+
+        // Label section dimensions
+        const labelText = "Mode(AR):";
+        ctx.font = "12px monospace";
+        const labelWidth = ctx.measureText(labelText).width + 16;  // Text + padding
+        this.lastLabelWidth = labelWidth;  // Store for hit testing
+
+        // Draw label section with darker background (like USE IMAGE DIMS?)
+        ctx.fillStyle = "#1a1a1a";  // Darker background for label
+        ctx.fillRect(x, y, labelWidth, displayHeight);
+
+        // Draw label text in brighter white
+        ctx.fillStyle = "#dddddd";  // Brighter white for label
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(labelText, x + 8, y + displayHeight / 2);
+
+        // Determine background color based on conflict severity
+        let statusBgColor = this.bgColor;  // Default: #2a2a2a (gray)
+        const hasWarningConflict = this.conflicts && this.conflicts.some(c =>
+            (c.severity === 'warning') ||
+            (typeof c === 'object' && c.message && c.message.includes('overriding'))
+        );
+
+        if (hasWarningConflict) {
+            statusBgColor = "#3a3000";  // Yellowish background for override conflicts
+        }
+
+        // Draw status section with severity-based background
+        ctx.fillStyle = statusBgColor;
+        ctx.fillRect(x + labelWidth, y, rectWidth - labelWidth, displayHeight);
+
+        // Draw status text in muted gray
+        ctx.fillStyle = this.textColor;  // #aaaaaa
+        const statusX = x + labelWidth + 8;
+
+        // NEW: Reserve space for ⚠️ emoji if conflicts exist
+        const hasConflicts = this.conflicts && this.conflicts.length > 0;
+        const emojiWidth = hasConflicts ? 20 : 0;
+        const maxWidth = rectWidth - labelWidth - 16 - emojiWidth;
+        const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
+        ctx.fillText(displayText, statusX, y + displayHeight / 2);
+
+        // NEW: Draw ⚠️ emoji at end if conflicts exist (Option A)
+        if (hasConflicts) {
+            const emojiX = x + rectWidth - 24;
+            ctx.fillStyle = "#ffaa00";  // Amber warning color
+            ctx.font = "14px monospace";
+            ctx.fillText("⚠️", emojiX, y + displayHeight / 2);
+        }
+
+        // Border around entire widget
+        ctx.strokeStyle = this.borderColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, rectWidth, displayHeight);
+
+        // Divider line between label and status
+        ctx.strokeStyle = "#3a3a3a";
+        ctx.beginPath();
+        ctx.moveTo(x + labelWidth, y);
+        ctx.lineTo(x + labelWidth, y + displayHeight);
+        ctx.stroke();
+
+        // NEW: Draw conflict tooltip if hovering over status section with conflicts
+        if (this.isHoveringStatus && hasConflicts) {
+            this.drawConflictTooltip(ctx, y, width);
+        }
+
+        ctx.restore();
+    }
+
+    computeSize(width) {
+        return [width, 28];  // Height matches other custom widgets
+    }
+
+    // Update the mode display text and conflicts
+    updateMode(modeDescription, conflicts = []) {
+        if (this.value !== modeDescription || this.conflicts !== conflicts) {
+            this.value = modeDescription || "Unknown";
+            this.conflicts = conflicts || [];
+            // Cache will be invalidated on next draw
+        }
+    }
+
+    /**
+     * Draw conflict tooltip showing conflict details (similar to SCALE tooltip)
+     */
+    drawConflictTooltip(ctx, widgetY, width) {
+        if (!this.conflicts || this.conflicts.length === 0) return;
+
+        const margin = 15;
+        const padding = 8;
+        const lineHeight = 16;
+
+        ctx.save();
+
+        // Build tooltip content
+        const lines = [`⚠️  Conflicts detected:`];
+
+        // Add each conflict with word wrapping
+        ctx.font = "bold 11px monospace";
+        let maxTooltipWidth = ctx.measureText(lines[0]).width;
+
+        this.conflicts.forEach(conflict => {
+            const msg = conflict.message || conflict;
+            const indent = '    '; // 4 spaces for indentation
+            const maxLineWidth = 500; // Maximum width in pixels for wrapped lines
+
+            // Measure and wrap based on actual pixel width
+            const words = msg.split(' ');
+            let currentLine = indent;
+
+            words.forEach((word, index) => {
+                const testLine = index === 0 ? indent + word : currentLine + ' ' + word;
+                const testWidth = ctx.measureText(testLine).width;
+
+                if (testWidth > maxLineWidth && currentLine !== indent) {
+                    // Line too long, push current line and start new one
+                    lines.push(currentLine);
+                    maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
+                    currentLine = indent + word;
+                } else {
+                    // Add word to current line
+                    currentLine = testLine;
+                }
+            });
+
+            // Push final line
+            if (currentLine.trim()) {
+                lines.push(currentLine);
+                maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
+            }
+        });
+
+        // Calculate tooltip dimensions
+        const tooltipWidth = maxTooltipWidth + padding * 2;
+        const tooltipHeight = lines.length * lineHeight + padding * 2;
+
+        // Position tooltip ABOVE the widget (since it's at top of node)
+        const tooltipX = margin;
+        const tooltipY = widgetY - tooltipHeight - 4;  // 4px gap above widget
+
+        // Draw tooltip background
+        ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
+        ctx.beginPath();
+        ctx.roundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 4);
+        ctx.fill();
+
+        // Draw tooltip border
+        ctx.strokeStyle = "#555";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Draw tooltip text
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        lines.forEach((line, index) => {
+            const textY = tooltipY + padding + (index * lineHeight);
+            ctx.fillText(line, tooltipX + padding, textY);
+        });
+
+        ctx.restore();
+    }
+
+    /**
+     * Check if mouse position is within widget bounds
+     */
+    isInBounds(pos, width) {
+        const x = 15;
+        const displayHeight = 24;
+        const rectWidth = width - 30;
+
+        return pos[0] >= x &&
+               pos[0] <= x + rectWidth &&
+               pos[1] >= this.lastY &&
+               pos[1] <= this.lastY + displayHeight;
+    }
+
+    /**
+     * Handle mouse events for tooltip display
+     */
+    mouse(event, pos, node) {
+        const width = node.size[0];
+        const x = 15;
+
+        if (event.type === "pointermove") {
+            // Clear any existing safety timeout
+            if (this.tooltipTimeout) {
+                clearTimeout(this.tooltipTimeout);
+                this.tooltipTimeout = null;
+            }
+
+            // Check if hovering over status section (not label)
+            const wasHoveringStatus = this.isHoveringStatus;
+            this.isHoveringStatus = false;
+
+            if (this.isInBounds(pos, width)) {
+                // Only track status section hover (label uses native tooltip)
+                if (pos[0] > x + this.lastLabelWidth) {
+                    this.isHoveringStatus = true;
+                }
+            }
+
+            // Redraw if hover state changed
+            if (wasHoveringStatus !== this.isHoveringStatus) {
+                node.setDirtyCanvas(true);
+            }
+
+            // Keep tooltip visible while hovering (no auto-hide timeout)
+            // Tooltip will only hide when mouse leaves widget bounds (handled below)
+        }
+
+        // Handle mouse leaving widget area - immediately hide tooltip
+        if (event.type === "pointerleave" || event.type === "pointerout") {
+            if (this.tooltipTimeout) {
+                clearTimeout(this.tooltipTimeout);
+                this.tooltipTimeout = null;
+            }
+            if (this.isHoveringStatus) {
+                this.isHoveringStatus = false;
+                node.setDirtyCanvas(true);
+            }
+        }
+
+        return false;  // Don't capture clicks
     }
 }
 
@@ -1823,6 +2444,25 @@ class DimensionWidget {
                 const oldState = this.value.on;
                 this.value.on = !this.value.on;
                 logger.debug(`Toggle clicked: ${this.name} - ${oldState} → ${this.value.on}`);
+
+                // Invalidate dimension source cache when toggle changes
+                node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
+
+                // Refresh image dimensions if image is connected and USE_IMAGE is enabled
+                // This ensures fresh image data is loaded when dimension toggles change
+                const imageWidget = node.widgets?.find(w => w.name === "image_mode");
+                const imageConnected = imageWidget && !imageWidget.imageDisconnected;
+                const useImageEnabled = imageWidget?.value?.on;
+
+                if (imageConnected && useImageEnabled) {
+                    const scaleWidget = node.widgets?.find(w => w instanceof ScaleWidget);
+                    if (scaleWidget?.refreshImageDimensions) {
+                        logger.info(`[${this.name}] Dimension toggle changed, refreshing image data`);
+                        scaleWidget.refreshImageDimensions(node);
+                    }
+                }
+
                 node.setDirtyCanvas(true);
                 return true;
             }
@@ -1837,6 +2477,11 @@ class DimensionWidget {
                 // Decrement button
                 if (this.isInBounds(pos, this.hitAreas.valueDec)) {
                     this.changeValue(-1, node);
+
+                    // Invalidate dimension source cache when value changes
+                    node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget
+
                     node.setDirtyCanvas(true);
                     return true;
                 }
@@ -1844,6 +2489,11 @@ class DimensionWidget {
                 // Increment button
                 if (this.isInBounds(pos, this.hitAreas.valueInc)) {
                     this.changeValue(1, node);
+
+                    // Invalidate dimension source cache when value changes
+                    node.dimensionSourceManager?.invalidateCache();
+                    node.updateModeWidget?.(); // Update MODE widget
+
                     node.setDirtyCanvas(true);
                     return true;
                 }
@@ -1855,6 +2505,11 @@ class DimensionWidget {
                         const parsed = parseFloat(newValue);
                         if (!isNaN(parsed)) {
                             this.value.value = this.isInteger ? Math.round(parsed) : parsed;
+
+                            // Invalidate dimension source cache when value changes
+                            node.dimensionSourceManager?.invalidateCache();
+                            node.updateModeWidget?.(); // Update MODE widget
+
                             node.setDirtyCanvas(true);
                         }
                     }, event);
@@ -1930,7 +2585,7 @@ class ImageModeWidget {
         this.name = name;
         this.type = "custom";
         this.value = {
-            on: true,   // Default: enabled
+            on: false,  // Default: disabled
             value: 0    // 0 = AR Only, 1 = Exact Dims
         };
 
@@ -2113,21 +2768,44 @@ class ImageModeWidget {
                 // Symmetric toggle behavior would skip this check (always allow)
 
                 this.value.on = newState;
+                // dimensionLogger.debug('[TOGGLE] Image mode toggled:', oldState, '→', newState);
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
+                // NEW: Mutual exclusivity - disable custom_ratio when enabling USE IMAGE DIMS in AR Only mode
+                if (newState === true && this.value.value === 0) {  // Turning ON and in AR Only mode
+                    const customRatioWidget = node.widgets?.find(w => w.name === "custom_ratio");
+                    if (customRatioWidget && customRatioWidget.value === true) {
+                        customRatioWidget.value = false;
+                        logger.info('[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with USE IMAGE DIMS (AR Only)');
+                    }
+                }
+
+                // Invalidate dimension source cache when USE_IMAGE toggle changes
+                node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
+
                 // Trigger scale dimension refresh when USE_IMAGE is toggled
-                const scaleWidget = node.widgets?.find(w => w.name === "scale");
+                // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
+                const scaleWidget = node.widgets?.find(w => w instanceof ScaleWidget);
+                // dimensionLogger.verbose('[TOGGLE] scaleWidget found:', scaleWidget);
+                // dimensionLogger.verbose('[TOGGLE] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
+                // dimensionLogger.verbose('[TOGGLE] typeof refreshImageDimensions:', typeof scaleWidget?.refreshImageDimensions);
+
                 if (scaleWidget?.refreshImageDimensions) {
+                    // dimensionLogger.debug('[TOGGLE] Inside refresh condition, newState:', newState);
                     if (newState) {
                         // Toggled ON - fetch image dimensions
+                        // dimensionLogger.debug('[TOGGLE] Calling refreshImageDimensions for ON state');
                         logger.info('[Toggle] USE_IMAGE enabled, triggering scale dimension refresh');
                         scaleWidget.refreshImageDimensions(node);
                     } else {
                         // Toggled OFF - clear cache
+                        // dimensionLogger.debug('[TOGGLE] Clearing cache for OFF state');
                         scaleWidget.imageDimensionsCache = null;
                         logger.info('[Toggle] USE_IMAGE disabled, cleared scale dimension cache');
                     }
                 } else {
+                    // dimensionLogger.debug('[TOGGLE] No scale widget or refresh method found');
                     logger.debug('[Toggle] No scale widget or refresh method found');
                 }
 
@@ -2144,6 +2822,20 @@ class ImageModeWidget {
             if (allowModeEdit && this.isInBounds(pos, this.hitAreas.modeSelector)) {
                 this.value.value = this.value.value === 0 ? 1 : 0;
                 logger.debug(`Image mode changed to: ${this.modes[this.value.value]}`);
+
+                // NEW: Mutual exclusivity - disable custom_ratio when switching to AR Only mode
+                if (this.value.value === 0) {  // Switched to AR Only
+                    const customRatioWidget = node.widgets?.find(w => w.name === "custom_ratio");
+                    if (customRatioWidget && customRatioWidget.value === true) {
+                        customRatioWidget.value = false;
+                        logger.info('[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with AR Only mode');
+                    }
+                }
+
+                // Invalidate dimension source cache when mode changes (AR Only ↔ Exact Dims)
+                node.dimensionSourceManager?.invalidateCache();
+                node.updateModeWidget?.(); // Update MODE widget
+
                 node.setDirtyCanvas(true);
                 return true;
             }
@@ -2763,17 +3455,23 @@ app.registerExtension({
                     valueBehavior: ValueBehavior.ALWAYS,
                     tooltipContent: TOOLTIP_CONTENT.megapixel  // Add tooltip for MEGAPIXEL
                 });
-                const widthWidget = new DimensionWidget("dimension_width", 1920, true, {
+                const widthWidget = new DimensionWidget("dimension_width", 1024, true, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
                     valueBehavior: ValueBehavior.ALWAYS
                 });
-                const heightWidget = new DimensionWidget("dimension_height", 1080, true, {
+                const heightWidget = new DimensionWidget("dimension_height", 1024, true, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
                     valueBehavior: ValueBehavior.ALWAYS
                 });
 
                 // Add custom scale widget
                 const scaleWidget = new ScaleWidget("scale", 1.0);
+                this.scaleWidgetInstance = scaleWidget; // Store reference for updateModeWidget
+
+                // MODE widget: Optimizations insufficient - custom widgets in draw cycle cause corruption
+                // Even with caching and binary search, draw() participation at 60fps is too expensive
+                // Alternative approaches needed: DOM overlay, stock widget, or non-draw mechanism
+                // const modeStatusWidget = new ModeStatusWidget("mode_status");
 
                 // Add widgets to node (image mode first, then copy button, then dimension controls, then scale)
                 this.addCustomWidget(imageModeWidget);
@@ -2782,9 +3480,35 @@ app.registerExtension({
                 this.addCustomWidget(widthWidget);
                 this.addCustomWidget(heightWidget);
                 this.addCustomWidget(scaleWidget);
+                // this.addCustomWidget(modeStatusWidget);
 
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
+
+                // Initialize DimensionSourceManager for centralized dimension calculation
+                this.dimensionSourceManager = new DimensionSourceManager(this);
+                logger.debug('Initialized DimensionSourceManager');
+
+                // Hide the native mode_status widget (we'll create a custom widget instead)
+                const nativeModeStatusWidget = this.widgets.find(w => w.name === "mode_status");
+                if (nativeModeStatusWidget) {
+                    nativeModeStatusWidget.type = "converted-widget";
+                    nativeModeStatusWidget.computeSize = () => [0, -4];  // Hide it from layout
+                    logger.debug('Hidden native mode_status widget');
+                }
+
+                // Create custom MODE status widget using existing ModeStatusWidget class
+                const modeStatusWidget = new ModeStatusWidget("mode_status");
+
+                // Insert custom widget above aspect_ratio
+                const aspectRatioIndex = this.widgets.findIndex(w => w.name === "aspect_ratio");
+                if (aspectRatioIndex !== -1) {
+                    this.widgets.splice(aspectRatioIndex, 0, modeStatusWidget);
+                    logger.debug('Created custom MODE status widget above aspect_ratio');
+                } else {
+                    this.widgets.push(modeStatusWidget);
+                    logger.debug('Created custom MODE status widget at end');
+                }
 
                 // Hide the default "scale" widget created by ComfyUI (we use custom widget instead)
                 const defaultScaleWidget = this.widgets.find(w => w.name === "scale" && w.type !== "custom");
@@ -2797,6 +3521,45 @@ app.registerExtension({
 
                 // Set initial size (widgets will auto-adjust)
                 this.setSize(this.computeSize());
+
+                // Helper function to update MODE widget with current dimension source
+                const updateModeWidget = async () => {
+                    const modeWidget = this.widgets.find(w => w.name === "mode_status");
+                    if (modeWidget && this.dimensionSourceManager) {
+                        // Get imageDimensionsCache from stored ScaleWidget reference
+                        const imageDimensionsCache = this.scaleWidgetInstance?.imageDimensionsCache;
+
+                        // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
+                        // Calls Python API for single source of truth
+                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(false, {
+                            imageDimensionsCache: imageDimensionsCache
+                        });
+
+                        if (dimSource) {
+                            const scaleWidget = this.widgets.find(w => w.name === "scale" && w.type === "custom");
+                            if (scaleWidget && scaleWidget.getSimplifiedModeLabel) {
+                                const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource);
+                                if (modeLabel) {
+                                    // NEW: Update mode widget with conflicts from Python API
+                                    if (modeWidget.updateMode) {
+                                        // Custom widget with updateMode method
+                                        modeWidget.updateMode(modeLabel, dimSource.conflicts || []);
+                                    } else {
+                                        // Fallback for native ComfyUI widget
+                                        modeWidget.value = modeLabel;
+                                    }
+                                    this.setDirtyCanvas(true, false);  // Trigger redraw without full graph recompute
+                                }
+                            }
+                        }
+                    }
+                };
+
+                // Update MODE widget with initial state
+                setTimeout(() => updateModeWidget(), 100); // Delay to ensure everything is initialized
+
+                // Store updateModeWidget on node for access from custom widgets
+                this.updateModeWidget = updateModeWidget;
 
                 // Wrap native ComfyUI widgets with tooltip support
                 // These are created by Python node definition, not custom widgets
@@ -2822,6 +3585,58 @@ app.registerExtension({
                     logger.debug('Added tooltip to aspect_ratio widget, type:', aspectRatioWidget.type);
                 } else {
                     logger.debug('aspect_ratio widget not found');
+                }
+
+                // Hook native widget callbacks to invalidate dimension source cache
+                const customRatioWidget = this.widgets.find(w => w.name === "custom_ratio");
+                if (customRatioWidget) {
+                    const originalCallback = customRatioWidget.callback;
+                    customRatioWidget.callback = async (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(customRatioWidget, value);
+                        }
+
+                        // NEW: Mutual exclusivity - disable USE IMAGE DIMS if enabling custom_ratio and imageMode is AR Only
+                        if (value === true) {
+                            const imageModeWidget = this.widgets.find(w => w.name === "image_mode");
+                            if (imageModeWidget && imageModeWidget.value?.on && imageModeWidget.value?.value === 0) {
+                                // USE IMAGE DIMS is ON and in AR Only mode
+                                imageModeWidget.value.on = false;
+                                logger.info('[custom_ratio] Auto-disabled USE IMAGE DIMS (AR Only) due to mutual exclusivity');
+                            }
+                        }
+
+                        // Invalidate cache when custom_ratio toggle changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('custom_ratio changed, MODE widget updated');
+                    };
+                }
+
+                if (customAspectRatioWidget) {
+                    const originalCallback = customAspectRatioWidget.callback;
+                    customAspectRatioWidget.callback = async (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(customAspectRatioWidget, value);
+                        }
+                        // Invalidate cache when custom_aspect_ratio text changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('custom_aspect_ratio changed, MODE widget updated');
+                    };
+                }
+
+                if (aspectRatioWidget) {
+                    const originalCallback = aspectRatioWidget.callback;
+                    aspectRatioWidget.callback = async (value) => {
+                        if (originalCallback) {
+                            originalCallback.call(aspectRatioWidget, value);
+                        }
+                        // Invalidate cache when aspect_ratio dropdown changes
+                        this.dimensionSourceManager?.invalidateCache();
+                        await updateModeWidget(); // Wait for MODE widget update
+                        logger.debug('aspect_ratio changed, MODE widget updated');
+                    };
                 }
 
                 // Set up hit areas for native widgets after they're drawn
@@ -2864,20 +3679,22 @@ app.registerExtension({
                 };
 
                 // Debug: Log initial widget references to verify correct widgets found
-                visibilityLogger.debug('[WidgetInit] Initial widget references:', {
-                    output_image_mode: {
-                        name: this.imageOutputWidgets.output_image_mode?.name,
-                        type: this.imageOutputWidgets.output_image_mode?.type,
-                        value: this.imageOutputWidgets.output_image_mode?.value,
-                        index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
-                    },
-                    fill_type: {
-                        name: this.imageOutputWidgets.fill_type?.name,
-                        type: this.imageOutputWidgets.fill_type?.type,
-                        value: this.imageOutputWidgets.fill_type?.value,
-                        index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
-                    }
-                });
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[WidgetInit] Initial widget references:', {
+                        output_image_mode: {
+                            name: this.imageOutputWidgets.output_image_mode?.name,
+                            type: this.imageOutputWidgets.output_image_mode?.type,
+                            value: this.imageOutputWidgets.output_image_mode?.value,
+                            index: this.widgets.indexOf(this.imageOutputWidgets.output_image_mode)
+                        },
+                        fill_type: {
+                            name: this.imageOutputWidgets.fill_type?.name,
+                            type: this.imageOutputWidgets.fill_type?.type,
+                            value: this.imageOutputWidgets.fill_type?.value,
+                            index: this.widgets.indexOf(this.imageOutputWidgets.fill_type)
+                        }
+                    });
+                }
 
                 // Store original widget types, indices, and default values for restore
                 this.imageOutputWidgetIndices = {};
@@ -2984,35 +3801,50 @@ app.registerExtension({
                             return;
                         }
 
-                        visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
-                        visibilityLogger.debug('[WidgetRestore] Widget references:', {
-                            output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
-                            fill_type: this.imageOutputWidgets.fill_type?.name,
-                            color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
-                        });
-                        visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`batch_size found at index ${batchSizeIndex}`);
+                            visibilityLogger.debug('[WidgetRestore] Widget references:', {
+                                output_image_mode: this.imageOutputWidgets.output_image_mode?.name,
+                                fill_type: this.imageOutputWidgets.fill_type?.name,
+                                color_picker_button: this.imageOutputWidgets.color_picker_button?.name || 'button'
+                            });
+                            visibilityLogger.debug('[WidgetRestore] Saved values:', this.imageOutputWidgetValues);
+                        }
 
                         // Start inserting after batch_size
                         let currentIndex = batchSizeIndex + 1;
 
                         // 1. Insert output_image_mode first
                         const outputWidget = this.imageOutputWidgets.output_image_mode;
-                        visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
-                            name: outputWidget?.name,
-                            type: outputWidget?.type,
-                            value: outputWidget?.value,
-                            options: outputWidget?.options?.values
-                        });
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`[WidgetRestore] output_image_mode widget:`, {
+                                name: outputWidget?.name,
+                                type: outputWidget?.type,
+                                value: outputWidget?.value,
+                                options: outputWidget?.options?.values
+                            });
+                        }
                         if (outputWidget && this.widgets.indexOf(outputWidget) === -1) {
-                            // Restore saved value
+                            // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.output_image_mode;
-                            if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                outputWidget.value = savedValue;
+                            if (savedValue !== undefined) {
+                                const validation = validateWidgetValue('output_image_mode', savedValue, 'restore');
+                                if (!validation.valid) {
+                                    logCorruptionDiagnostics(validation.warnings, {
+                                        widget: 'output_image_mode',
+                                        savedValue: savedValue,
+                                        widgetIndex: this.widgets.indexOf(outputWidget),
+                                        operation: 'restore (showing widgets)'
+                                    });
+                                }
+                                outputWidget.value = validation.correctedValue;
                             }
 
                             this.widgets.splice(currentIndex, 0, outputWidget);
                             outputWidget.type = outputWidget.origType || "combo";
-                            visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`Inserted output_image_mode at index ${currentIndex}, value: ${outputWidget.value}`);
+                            }
                             currentIndex++; // Move insertion point forward
                         } else if (outputWidget) {
                             // Already visible, update currentIndex to point after it
@@ -3020,27 +3852,42 @@ app.registerExtension({
                             if (existingIndex >= currentIndex) {
                                 currentIndex = existingIndex + 1;
                             }
-                            visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`output_image_mode already visible at ${existingIndex}`);
+                            }
                         }
 
                         // 2. Insert fill_type second
                         const fillTypeWidget = this.imageOutputWidgets.fill_type;
-                        visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
-                            name: fillTypeWidget?.name,
-                            type: fillTypeWidget?.type,
-                            value: fillTypeWidget?.value,
-                            options: fillTypeWidget?.options?.values
-                        });
+                        if (visibilityLogger.debugEnabled) {
+                            visibilityLogger.debug(`[WidgetRestore] fill_type widget:`, {
+                                name: fillTypeWidget?.name,
+                                type: fillTypeWidget?.type,
+                                value: fillTypeWidget?.value,
+                                options: fillTypeWidget?.options?.values
+                            });
+                        }
                         if (fillTypeWidget && this.widgets.indexOf(fillTypeWidget) === -1) {
-                            // Restore saved value
+                            // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.fill_type;
-                            if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                fillTypeWidget.value = savedValue;
+                            if (savedValue !== undefined) {
+                                const validation = validateWidgetValue('fill_type', savedValue, 'restore');
+                                if (!validation.valid) {
+                                    logCorruptionDiagnostics(validation.warnings, {
+                                        widget: 'fill_type',
+                                        savedValue: savedValue,
+                                        widgetIndex: this.widgets.indexOf(fillTypeWidget),
+                                        operation: 'restore (showing widgets)'
+                                    });
+                                }
+                                fillTypeWidget.value = validation.correctedValue;
                             }
 
                             this.widgets.splice(currentIndex, 0, fillTypeWidget);
                             fillTypeWidget.type = fillTypeWidget.origType || "combo";
-                            visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`Inserted fill_type at index ${currentIndex}, value: ${fillTypeWidget.value}`);
+                            }
                             currentIndex++; // Move insertion point forward
                         } else if (fillTypeWidget) {
                             // Already visible, update currentIndex to point after it
@@ -3048,7 +3895,9 @@ app.registerExtension({
                             if (existingIndex >= currentIndex) {
                                 currentIndex = existingIndex + 1;
                             }
-                            visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`fill_type already visible at ${existingIndex}`);
+                            }
                         }
 
                         // 3. fill_color should already be in array (invisible)
@@ -3087,13 +3936,23 @@ app.registerExtension({
                         visibilityLogger.debug('Widgets to hide:', widgetsToHide.map(w => `${w.key} at index ${w.currentIndex}`));
 
                         widgetsToHide.forEach(item => {
-                            // Hide widget - save current value (but only if it's a primitive, not object)
-                            if (typeof item.widget.value !== 'object') {
-                                this.imageOutputWidgetValues[item.key] = item.widget.value;
-                                visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${item.widget.value}`);
-                            } else {
-                                visibilityLogger.debug(`Widget ${item.key} value is object, using default: ${this.imageOutputWidgetValues[item.key]}`);
+                            // Hide widget - save current value with validation (v0.5.0 corruption protection)
+                            const currentValue = item.widget.value;
+                            const validation = validateWidgetValue(item.key, currentValue, 'save');
+
+                            if (!validation.valid) {
+                                logCorruptionDiagnostics(validation.warnings, {
+                                    widget: item.key,
+                                    currentValue: currentValue,
+                                    widgetIndex: item.currentIndex,
+                                    operation: 'save (hiding widgets)'
+                                });
                             }
+
+                            // Save validated value
+                            this.imageOutputWidgetValues[item.key] = validation.correctedValue;
+                            visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${validation.correctedValue}`);
+
                             this.widgets.splice(item.currentIndex, 1);
                         });
                     }
@@ -3204,7 +4063,64 @@ app.registerExtension({
             // Store scale widget configuration in workflow (not sent to Python)
             const onSerialize = nodeType.prototype.serialize;
             nodeType.prototype.serialize = function() {
+                // === SERIALIZATION DIAGNOSTICS (v0.5.0) ===
+                // Capture widget array state at moment of serialization to debug corruption
+                const serializationDiagnostics = {
+                    timestamp: new Date().toISOString(),
+                    widgetCount: this.widgets ? this.widgets.length : 0,
+                    widgetPositions: {},
+                    widgetValues: {},
+                    imageOutputWidgetsState: {}
+                };
+
+                // Track all widget positions and values
+                if (this.widgets) {
+                    this.widgets.forEach((widget, index) => {
+                        serializationDiagnostics.widgetPositions[widget.name] = index;
+                        serializationDiagnostics.widgetValues[widget.name] = {
+                            value: widget.value,
+                            type: typeof widget.value,
+                            visible: widget.type !== undefined // Hidden widgets have type undefined
+                        };
+                    });
+                }
+
+                // Track image output widgets specifically (corruption-prone area)
+                if (this.imageOutputWidgets) {
+                    Object.keys(this.imageOutputWidgets).forEach(key => {
+                        const widget = this.imageOutputWidgets[key];
+                        if (widget) {
+                            const arrayIndex = this.widgets ? this.widgets.indexOf(widget) : -1;
+                            serializationDiagnostics.imageOutputWidgetsState[key] = {
+                                inArray: arrayIndex !== -1,
+                                arrayIndex: arrayIndex,
+                                currentValue: widget.value,
+                                savedValue: this.imageOutputWidgetValues ? this.imageOutputWidgetValues[key] : undefined
+                            };
+                        }
+                    });
+                }
+
+                // Log diagnostics
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[SERIALIZE] Widget array state:', serializationDiagnostics);
+                }
+
                 const data = onSerialize ? onSerialize.apply(this) : {};
+
+                // === PHASE 2A: NAME-BASED SERIALIZATION (v0.5.1) ===
+                // Serialize widgets by NAME instead of relying on array index
+                // This prevents corruption at the source rather than fixing it during restore
+                const widgetsByName = {};
+                if (this.widgets) {
+                    this.widgets.forEach(widget => {
+                        widgetsByName[widget.name] = widget.value;
+                    });
+                }
+                data.widgets_values_by_name = widgetsByName;
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[SERIALIZE] Saved widgets by name:', widgetsByName);
+                }
 
                 // Store scale widget step configuration
                 const scaleWidget = this.widgets ? this.widgets.find(w => w instanceof ScaleWidget) : null;
@@ -3217,6 +4133,10 @@ app.registerExtension({
                     logger.debug('Serializing scale config:', data.widgets_config.scale);
                 }
 
+                // Store serialization diagnostics for debugging (not needed in production, but helpful)
+                if (!data.widgets_config) data.widgets_config = {};
+                data.widgets_config._serialization_diagnostics = serializationDiagnostics;
+
                 return data;
             };
 
@@ -3227,12 +4147,120 @@ app.registerExtension({
                 logger.debug('info:', info);
                 logger.debug('widgets_values:', info.widgets_values);
 
+                // === DESERIALIZATION DIAGNOSTICS (v0.5.0) ===
+                // Capture state before and after deserialization to debug corruption
+                const beforeState = {
+                    timestamp: new Date().toISOString(),
+                    widgetCount: this.widgets ? this.widgets.length : 0,
+                    widgetPositions: {},
+                    widgetValues: {}
+                };
+
+                if (this.widgets) {
+                    this.widgets.forEach((widget, index) => {
+                        beforeState.widgetPositions[widget.name] = index;
+                        beforeState.widgetValues[widget.name] = widget.value;
+                    });
+                }
+
+                if (visibilityLogger.debugEnabled) {
+                    visibilityLogger.debug('[DESERIALIZE-BEFORE] Widget state:', beforeState);
+                }
+
+                // Check if workflow has serialization diagnostics from save
+                if (info.widgets_config && info.widgets_config._serialization_diagnostics) {
+                    if (visibilityLogger.debugEnabled) {
+                        visibilityLogger.debug('[DESERIALIZE] Serialization diagnostics from workflow:', info.widgets_config._serialization_diagnostics);
+                    }
+                }
+
                 if (onConfigure) {
                     onConfigure.apply(this, arguments);
                 }
 
-                // Restore widget values from saved workflow
-                if (info.widgets_values) {
+                // === PHASE 2A: DIRECT NAME-BASED RESTORE (v0.5.2) ===
+                // Prefer direct name-based serialization format over diagnostics-based restoration
+                // This is the cleanest approach - values serialized by name, restored by name
+                if (info.widgets_values_by_name) {
+                    visibilityLogger.info('[NAME-BASED-RESTORE] Using direct name-based serialization (v0.5.2+)');
+                    let restoredCount = 0;
+                    let skippedCount = 0;
+
+                    this.widgets.forEach(widget => {
+                        if (info.widgets_values_by_name[widget.name] !== undefined) {
+                            widget.value = info.widgets_values_by_name[widget.name];
+                            restoredCount++;
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(widget.value)}`);
+                            }
+                        } else {
+                            skippedCount++;
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in saved data)`);
+                            }
+                        }
+                    });
+
+                    visibilityLogger.info(`[NAME-BASED-RESTORE] Direct restore complete: ${restoredCount} restored, ${skippedCount} skipped`);
+                }
+                // === PHASE 2a: DIAGNOSTICS-BASED RESTORE (v0.5.1 fallback) ===
+                // Fix corruption by restoring widget values by name instead of index
+                // Uses serialization diagnostics to map widget names to their saved values
+                else if (info.widgets_config && info.widgets_config._serialization_diagnostics && info.widgets_values) {
+                    const diagnostics = info.widgets_config._serialization_diagnostics;
+                    visibilityLogger.info('[NAME-BASED-RESTORE] Using serialization diagnostics to restore by name');
+
+                    // Build name→value map from save-time widget positions
+                    const valuesByName = {};
+                    Object.keys(diagnostics.widgetPositions).forEach(widgetName => {
+                        const savedIndex = diagnostics.widgetPositions[widgetName];
+                        if (savedIndex < info.widgets_values.length) {
+                            valuesByName[widgetName] = info.widgets_values[savedIndex];
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Mapped ${widgetName} from saved index ${savedIndex}`);
+                            }
+                        }
+                    });
+
+                    // Restore values by name (current positions may differ from save time)
+                    let restoredCount = 0;
+                    let skippedCount = 0;
+                    this.widgets.forEach(widget => {
+                        if (valuesByName[widget.name] !== undefined) {
+                            const savedValue = valuesByName[widget.name];
+                            const currentIndex = this.widgets.indexOf(widget);
+
+                            // Log position changes (indicates why index-based would corrupt)
+                            const savedIndex = diagnostics.widgetPositions[widget.name];
+                            if (savedIndex !== currentIndex) {
+                                visibilityLogger.info(`[NAME-BASED-RESTORE] ${widget.name} position changed: saved index ${savedIndex} → current index ${currentIndex}`);
+                            }
+
+                            // Restore value (will be validated later)
+                            widget.value = savedValue;
+                            restoredCount++;
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(savedValue)}`);
+                            }
+                        } else {
+                            skippedCount++;
+                            if (visibilityLogger.debugEnabled) {
+                                visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in diagnostics, keeping current value)`);
+                            }
+                        }
+                    });
+
+                    visibilityLogger.info(`[NAME-BASED-RESTORE] Restored ${restoredCount} widgets by name, skipped ${skippedCount}`);
+                }
+
+                // Restore widget values from saved workflow (old heuristic method for workflows without diagnostics)
+                // NOTE: If name-based restore succeeded above, this section is skipped to avoid double-restoration
+                const useNameBasedRestore = !!(info.widgets_config && info.widgets_config._serialization_diagnostics);
+                if (info.widgets_values && !useNameBasedRestore) {
+                    // Fallback for old workflows without diagnostics - use type-based heuristic matching
+                    visibilityLogger.info('[FALLBACK-RESTORE] No serialization diagnostics - using old heuristic restore (may corrupt)');
+                    visibilityLogger.info('[FALLBACK-RESTORE] Please re-save workflow to enable name-based restore');
+
                     // Restore ImageModeWidget (has {on, value} structure)
                     const imageModeWidgets = this.widgets.filter(w => w instanceof ImageModeWidget);
                     const imageModeValues = info.widgets_values.filter(v => v && typeof v === 'object' && 'on' in v && 'value' in v && typeof v.value === 'number' && v.value <= 1);
@@ -3279,6 +4307,63 @@ app.registerExtension({
                             logger.debug('Restored scale config:', info.widgets_config.scale);
                         }
                     }
+
+                    // === DESERIALIZATION DIAGNOSTICS - AFTER (v0.5.0) ===
+                    // Capture state after deserialization to compare with before state
+                    const afterState = {
+                        timestamp: new Date().toISOString(),
+                        widgetCount: this.widgets ? this.widgets.length : 0,
+                        widgetPositions: {},
+                        widgetValues: {}
+                    };
+
+                    if (this.widgets) {
+                        this.widgets.forEach((widget, index) => {
+                            afterState.widgetPositions[widget.name] = index;
+                            afterState.widgetValues[widget.name] = widget.value;
+                        });
+                    }
+
+                    if (visibilityLogger.debugEnabled) {
+                        visibilityLogger.debug('[DESERIALIZE-AFTER] Widget state:', afterState);
+                    }
+
+                    // Detect position changes (potential corruption source)
+                    Object.keys(beforeState.widgetPositions).forEach(widgetName => {
+                        const beforeIndex = beforeState.widgetPositions[widgetName];
+                        const afterIndex = afterState.widgetPositions[widgetName];
+                        if (beforeIndex !== afterIndex) {
+                            visibilityLogger.info(`[DESERIALIZE] Widget position changed: ${widgetName} moved from index ${beforeIndex} → ${afterIndex}`);
+                        }
+                    });
+
+                    // Validate combo widgets after workflow load (v0.5.0 corruption protection)
+                    // This catches corruption that happens during serialization/deserialization
+                    const comboWidgetsToValidate = ['output_image_mode', 'fill_type', 'fill_color',
+                                                     'batch_size', 'scale', 'divisible_by', 'custom_ratio',
+                                                     'dimension_megapixel', 'dimension_width', 'dimension_height'];
+                    comboWidgetsToValidate.forEach(widgetName => {
+                        const widget = this.widgets.find(w => w.name === widgetName);
+                        if (widget && widget.value !== undefined) {
+                            const validation = validateWidgetValue(widgetName, widget.value, 'workflow-load');
+                            if (!validation.valid) {
+                                logCorruptionDiagnostics(validation.warnings, {
+                                    widget: widgetName,
+                                    loadedValue: widget.value,
+                                    widgetIndex: this.widgets.indexOf(widget),
+                                    operation: 'configure (workflow load)',
+                                    workflowInfo: {
+                                        hasWidgetsValues: !!info.widgets_values,
+                                        widgetsValuesCount: info.widgets_values ? info.widgets_values.length : 0
+                                    },
+                                    beforeState: beforeState,
+                                    afterState: afterState
+                                });
+                                widget.value = validation.correctedValue;
+                                logger.info(`[Validation-workflow-load] Corrected ${widgetName}: ${widget.value} → ${validation.correctedValue}`);
+                            }
+                        }
+                    });
                 }
 
                 logger.groupEnd();
@@ -3297,11 +4382,20 @@ app.registerExtension({
                     const input = this.inputs[index];
 
                     if (input.name === "image") {
+                        // dimensionLogger.debug('[CONNECTION] Image connection change event, connected:', connected);
+
                         // Find the ImageModeWidget and ScaleWidget
                         const imageModeWidget = this.widgets?.find(w => w.name === "image_mode");
-                        const scaleWidget = this.widgets?.find(w => w.name === "scale");
+                        // IMPORTANT: Find the custom ScaleWidget instance, not the hidden default widget
+                        const scaleWidget = this.widgets?.find(w => w instanceof ScaleWidget);
+
+                        // dimensionLogger.verbose('[CONNECTION] imageModeWidget found:', imageModeWidget);
+                        // dimensionLogger.verbose('[CONNECTION] scaleWidget found:', scaleWidget);
+                        // dimensionLogger.verbose('[CONNECTION] scaleWidget.refreshImageDimensions exists:', scaleWidget?.refreshImageDimensions);
 
                         if (connected) {
+                            // dimensionLogger.debug('[CONNECTION] Processing image CONNECTED event');
+
                             // Mark image as connected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
                                 imageModeWidget.imageDisconnected = false;
@@ -3309,14 +4403,18 @@ app.registerExtension({
 
                             // Trigger dimension cache refresh for scale tooltip
                             if (scaleWidget && scaleWidget.refreshImageDimensions) {
+                                // dimensionLogger.debug('[CONNECTION] Calling refreshImageDimensions for connected image');
                                 logger.info('[Connection] Image connected, triggering scale dimension refresh');
                                 scaleWidget.refreshImageDimensions(this);
                             } else {
+                                // dimensionLogger.debug('[CONNECTION] No scale widget or refresh method found');
                                 logger.debug('[Connection] No scale widget or refresh method found');
                             }
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {
+                            // dimensionLogger.debug('[CONNECTION] Processing image DISCONNECTED event');
+
                             // Mark image as disconnected (enable asymmetric toggle logic)
                             if (imageModeWidget) {
                                 imageModeWidget.imageDisconnected = true;
@@ -3324,6 +4422,7 @@ app.registerExtension({
 
                             // Clear dimension cache when image disconnected
                             if (scaleWidget) {
+                                // dimensionLogger.debug('[CONNECTION] Clearing cache for disconnected image');
                                 scaleWidget.imageDimensionsCache = null;
                                 logger.info('[Connection] Image disconnected, cleared scale dimension cache');
                             }

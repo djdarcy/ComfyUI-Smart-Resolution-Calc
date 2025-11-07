@@ -60,7 +60,73 @@ try:
                 'error': str(e)
             }, status=500)
 
+    @server.PromptServer.instance.routes.post("/smart-resolution/calculate-dimensions")
+    async def calculate_dimensions(request):
+        """
+        API endpoint for dimension calculation using DimensionSourceCalculator.
+
+        This is the single source of truth for dimension calculations.
+        JavaScript calls this instead of calculating locally to prevent drift.
+
+        POST body: {
+            "widgets": {
+                "width_enabled": true,
+                "width_value": 1200,
+                "height_enabled": false,
+                "height_value": 800,
+                "mp_enabled": true,
+                "mp_value": 1.5,
+                "image_mode_enabled": false,
+                "image_mode_value": 0,
+                "custom_ratio_enabled": false,
+                "custom_aspect_ratio": "16:9",
+                "aspect_ratio_dropdown": "16:9"
+            },
+            "runtime_context": {
+                "image_info": {"width": 1920, "height": 1080}  // optional
+            }
+        }
+
+        Returns: {
+            "mode": "mp_width_explicit",
+            "priority": 3,
+            "baseW": 1200,
+            "baseH": 1250,
+            "source": "widgets_mp_computed",
+            "ar": {"ratio": 0.96, "aspectW": 24, "aspectH": 25, "source": "computed"},
+            "conflicts": [],
+            "description": "MP+W: 1200×1250 (H computed from 1.5MP, AR 24:25 implied)",
+            "activeSources": ["WIDTH", "MEGAPIXEL"],
+            "success": true
+        }
+        """
+        try:
+            data = await request.json()
+            widgets = data.get('widgets')
+            runtime_context = data.get('runtime_context', {})
+
+            if not widgets:
+                return web.json_response({
+                    'success': False,
+                    'error': 'No widgets provided'
+                }, status=400)
+
+            # Call static method to calculate dimensions
+            result = SmartResolutionCalc.calculate_dimensions_api(widgets, runtime_context)
+
+            if result.get('success'):
+                return web.json_response(result)
+            else:
+                return web.json_response(result, status=400)
+
+        except Exception as e:
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     print("[SmartResCalc] Registered API endpoint: /smart-resolution/get-dimensions")
+    print("[SmartResCalc] Registered API endpoint: /smart-resolution/calculate-dimensions")
 
 except Exception as e:
     print(f"[SmartResCalc] Warning: Could not register API endpoint: {e}")
