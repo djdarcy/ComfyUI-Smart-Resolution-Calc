@@ -44,6 +44,153 @@ async function importComfyCore() {
  */
 
 /**
+ * Widget Value Validation System (v0.5.0)
+ *
+ * PURPOSE: Detect and prevent widget value corruption caused by serialization issues.
+ *
+ * ROOT CAUSE: ComfyUI serializes widget values by array index, but we manually position
+ * widgets during hide/show cycles. When widgets shift positions, their values get
+ * restored to the wrong widgets.
+ *
+ * CORRUPTION PATTERNS:
+ * - Index confusion: fill_type gets '1' (array index) instead of 'black' (value)
+ * - Cross-contamination: output_image_mode gets 'custom_color' (fill_type's value)
+ * - Position mismatch: Hidden widgets shift array indices during serialization
+ *
+ * STRATEGY:
+ * 1. Validate values before save (catch corruption at source)
+ * 2. Validate values after restore (catch corruption during load)
+ * 3. Log corruption with diagnostics (identify code paths)
+ * 4. Self-heal with defaults (prevent execution failures)
+ */
+
+// Widget validation schemas - defines valid values and defaults
+const WIDGET_SCHEMAS = {
+    output_image_mode: {
+        validValues: ["auto", "empty", "transform (distort)", "transform (crop/pad)",
+                     "transform (scale/crop)", "transform (scale/pad)"],
+        default: "auto",
+        description: "Image output mode"
+    },
+    fill_type: {
+        validValues: ["black", "white", "custom_color", "noise", "random"],
+        default: "black",
+        description: "Fill type for image transformations"
+    },
+    fill_color: {
+        default: "#808080",
+        validator: (v) => /^#?[0-9A-Fa-f]{6}$/.test(v),
+        description: "Custom fill color (hex format)"
+    }
+};
+
+/**
+ * Validates a widget value against its schema
+ *
+ * @param {string} widgetName - Name of widget to validate
+ * @param {*} value - Value to validate
+ * @param {string} context - Context string for logging (e.g., "save" or "restore")
+ * @returns {{valid: boolean, correctedValue: *, warnings: string[]}} Validation result
+ */
+function validateWidgetValue(widgetName, value, context = "unknown") {
+    const schema = WIDGET_SCHEMAS[widgetName];
+    const warnings = [];
+
+    // No schema = no validation (allow value as-is)
+    if (!schema) {
+        return { valid: true, correctedValue: value, warnings };
+    }
+
+    // Check for object values (previous corruption pattern)
+    if (typeof value === 'object' && value !== null) {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has object value (should be primitive)`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value type: ${typeof value}`);
+        warnings.push(`   Value: ${JSON.stringify(value)}`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Object corruption in ${widgetName}:`, value);
+        return { valid: false, correctedValue: schema.default, warnings };
+    }
+
+    // Check for index confusion (number when should be string)
+    if (schema.validValues && typeof value === 'number') {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has numeric value (index confusion?)`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: ${value} (type: ${typeof value})`);
+        warnings.push(`   Expected type: string`);
+        warnings.push(`   Valid values: [${schema.validValues.join(', ')}]`);
+
+        // Attempt recovery: if value is valid index, use that array element
+        if (value >= 0 && value < schema.validValues.length) {
+            const corrected = schema.validValues[value];
+            warnings.push(`   🔧 Self-healing: Interpreting ${value} as index → "${corrected}"`);
+            visibilityLogger.error(`[Validation-${context}] Index confusion in ${widgetName}: ${value} → ${corrected}`);
+            return { valid: false, correctedValue: corrected, warnings };
+        } else {
+            warnings.push(`   🔧 Self-healing: Index ${value} out of range, using default "${schema.default}"`);
+            visibilityLogger.error(`[Validation-${context}] Invalid index in ${widgetName}: ${value}`);
+            return { valid: false, correctedValue: schema.default, warnings };
+        }
+    }
+
+    // Check if value in valid set (for enum-like widgets)
+    if (schema.validValues && !schema.validValues.includes(value)) {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has invalid value`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: "${value}"`);
+        warnings.push(`   Valid values: [${schema.validValues.join(', ')}]`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Invalid value in ${widgetName}: "${value}"`);
+        return { valid: false, correctedValue: schema.default, warnings };
+    }
+
+    // Check custom validator (for non-enum values like fill_color)
+    if (schema.validator && !schema.validator(value)) {
+        warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} failed validation`);
+        warnings.push(`   Context: ${context}`);
+        warnings.push(`   Value: "${value}"`);
+        warnings.push(`   🔧 Self-healing: Using default value "${schema.default}"`);
+        visibilityLogger.error(`[Validation-${context}] Validation failed for ${widgetName}: "${value}"`);
+        return { valid: false, correctedValue: schema.default, warnings };
+    }
+
+    // Value is valid
+    return { valid: true, correctedValue: value, warnings };
+}
+
+/**
+ * Logs corruption diagnostics to console (visible to users and developers)
+ *
+ * @param {string[]} warnings - Array of warning messages
+ * @param {object} context - Additional context for debugging
+ */
+function logCorruptionDiagnostics(warnings, context = {}) {
+    if (warnings.length === 0) return;
+
+    console.group('🚨 WIDGET CORRUPTION DETECTED - Smart Resolution Calculator');
+    console.error('═'.repeat(80));
+    warnings.forEach(msg => console.error(msg));
+
+    if (Object.keys(context).length > 0) {
+        console.error('');
+        console.error('Additional Context:');
+        Object.keys(context).forEach(key => {
+            console.error(`   ${key}: ${JSON.stringify(context[key])}`);
+        });
+    }
+
+    console.error('═'.repeat(80));
+    console.error('Stack trace for debugging:');
+    console.trace();
+    console.error('═'.repeat(80));
+    console.error('');
+    console.error('💡 This self-healed automatically with default values.');
+    console.error('💡 Please report this to the developer with the above information.');
+    console.error('💡 GitHub: https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/issues/8');
+    console.groupEnd();
+}
+
+/**
  * Toggle Behavior Modes
  *
  * Controls when a toggle can be enabled/disabled.
@@ -3616,10 +3763,19 @@ app.registerExtension({
                             options: outputWidget?.options?.values
                         });
                         if (outputWidget && this.widgets.indexOf(outputWidget) === -1) {
-                            // Restore saved value
+                            // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.output_image_mode;
-                            if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                outputWidget.value = savedValue;
+                            if (savedValue !== undefined) {
+                                const validation = validateWidgetValue('output_image_mode', savedValue, 'restore');
+                                if (!validation.valid) {
+                                    logCorruptionDiagnostics(validation.warnings, {
+                                        widget: 'output_image_mode',
+                                        savedValue: savedValue,
+                                        widgetIndex: this.widgets.indexOf(outputWidget),
+                                        operation: 'restore (showing widgets)'
+                                    });
+                                }
+                                outputWidget.value = validation.correctedValue;
                             }
 
                             this.widgets.splice(currentIndex, 0, outputWidget);
@@ -3644,10 +3800,19 @@ app.registerExtension({
                             options: fillTypeWidget?.options?.values
                         });
                         if (fillTypeWidget && this.widgets.indexOf(fillTypeWidget) === -1) {
-                            // Restore saved value
+                            // Restore saved value with validation (v0.5.0 corruption protection)
                             const savedValue = this.imageOutputWidgetValues.fill_type;
-                            if (savedValue !== undefined && typeof savedValue !== 'object') {
-                                fillTypeWidget.value = savedValue;
+                            if (savedValue !== undefined) {
+                                const validation = validateWidgetValue('fill_type', savedValue, 'restore');
+                                if (!validation.valid) {
+                                    logCorruptionDiagnostics(validation.warnings, {
+                                        widget: 'fill_type',
+                                        savedValue: savedValue,
+                                        widgetIndex: this.widgets.indexOf(fillTypeWidget),
+                                        operation: 'restore (showing widgets)'
+                                    });
+                                }
+                                fillTypeWidget.value = validation.correctedValue;
                             }
 
                             this.widgets.splice(currentIndex, 0, fillTypeWidget);
@@ -3699,13 +3864,23 @@ app.registerExtension({
                         visibilityLogger.debug('Widgets to hide:', widgetsToHide.map(w => `${w.key} at index ${w.currentIndex}`));
 
                         widgetsToHide.forEach(item => {
-                            // Hide widget - save current value (but only if it's a primitive, not object)
-                            if (typeof item.widget.value !== 'object') {
-                                this.imageOutputWidgetValues[item.key] = item.widget.value;
-                                visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${item.widget.value}`);
-                            } else {
-                                visibilityLogger.debug(`Widget ${item.key} value is object, using default: ${this.imageOutputWidgetValues[item.key]}`);
+                            // Hide widget - save current value with validation (v0.5.0 corruption protection)
+                            const currentValue = item.widget.value;
+                            const validation = validateWidgetValue(item.key, currentValue, 'save');
+
+                            if (!validation.valid) {
+                                logCorruptionDiagnostics(validation.warnings, {
+                                    widget: item.key,
+                                    currentValue: currentValue,
+                                    widgetIndex: item.currentIndex,
+                                    operation: 'save (hiding widgets)'
+                                });
                             }
+
+                            // Save validated value
+                            this.imageOutputWidgetValues[item.key] = validation.correctedValue;
+                            visibilityLogger.debug(`Widget ${item.key} hidden from index ${item.currentIndex}, saved value: ${validation.correctedValue}`);
+
                             this.widgets.splice(item.currentIndex, 1);
                         });
                     }
@@ -3816,6 +3991,47 @@ app.registerExtension({
             // Store scale widget configuration in workflow (not sent to Python)
             const onSerialize = nodeType.prototype.serialize;
             nodeType.prototype.serialize = function() {
+                // === SERIALIZATION DIAGNOSTICS (v0.5.0) ===
+                // Capture widget array state at moment of serialization to debug corruption
+                const serializationDiagnostics = {
+                    timestamp: new Date().toISOString(),
+                    widgetCount: this.widgets ? this.widgets.length : 0,
+                    widgetPositions: {},
+                    widgetValues: {},
+                    imageOutputWidgetsState: {}
+                };
+
+                // Track all widget positions and values
+                if (this.widgets) {
+                    this.widgets.forEach((widget, index) => {
+                        serializationDiagnostics.widgetPositions[widget.name] = index;
+                        serializationDiagnostics.widgetValues[widget.name] = {
+                            value: widget.value,
+                            type: typeof widget.value,
+                            visible: widget.type !== undefined // Hidden widgets have type undefined
+                        };
+                    });
+                }
+
+                // Track image output widgets specifically (corruption-prone area)
+                if (this.imageOutputWidgets) {
+                    Object.keys(this.imageOutputWidgets).forEach(key => {
+                        const widget = this.imageOutputWidgets[key];
+                        if (widget) {
+                            const arrayIndex = this.widgets ? this.widgets.indexOf(widget) : -1;
+                            serializationDiagnostics.imageOutputWidgetsState[key] = {
+                                inArray: arrayIndex !== -1,
+                                arrayIndex: arrayIndex,
+                                currentValue: widget.value,
+                                savedValue: this.imageOutputWidgetValues ? this.imageOutputWidgetValues[key] : undefined
+                            };
+                        }
+                    });
+                }
+
+                // Log diagnostics
+                visibilityLogger.debug('[SERIALIZE] Widget array state:', serializationDiagnostics);
+
                 const data = onSerialize ? onSerialize.apply(this) : {};
 
                 // Store scale widget step configuration
@@ -3829,6 +4045,10 @@ app.registerExtension({
                     logger.debug('Serializing scale config:', data.widgets_config.scale);
                 }
 
+                // Store serialization diagnostics for debugging (not needed in production, but helpful)
+                if (!data.widgets_config) data.widgets_config = {};
+                data.widgets_config._serialization_diagnostics = serializationDiagnostics;
+
                 return data;
             };
 
@@ -3838,6 +4058,29 @@ app.registerExtension({
                 logger.group('configure called');
                 logger.debug('info:', info);
                 logger.debug('widgets_values:', info.widgets_values);
+
+                // === DESERIALIZATION DIAGNOSTICS (v0.5.0) ===
+                // Capture state before and after deserialization to debug corruption
+                const beforeState = {
+                    timestamp: new Date().toISOString(),
+                    widgetCount: this.widgets ? this.widgets.length : 0,
+                    widgetPositions: {},
+                    widgetValues: {}
+                };
+
+                if (this.widgets) {
+                    this.widgets.forEach((widget, index) => {
+                        beforeState.widgetPositions[widget.name] = index;
+                        beforeState.widgetValues[widget.name] = widget.value;
+                    });
+                }
+
+                visibilityLogger.debug('[DESERIALIZE-BEFORE] Widget state:', beforeState);
+
+                // Check if workflow has serialization diagnostics from save
+                if (info.widgets_config && info.widgets_config._serialization_diagnostics) {
+                    visibilityLogger.debug('[DESERIALIZE] Serialization diagnostics from workflow:', info.widgets_config._serialization_diagnostics);
+                }
 
                 if (onConfigure) {
                     onConfigure.apply(this, arguments);
@@ -3891,6 +4134,59 @@ app.registerExtension({
                             logger.debug('Restored scale config:', info.widgets_config.scale);
                         }
                     }
+
+                    // === DESERIALIZATION DIAGNOSTICS - AFTER (v0.5.0) ===
+                    // Capture state after deserialization to compare with before state
+                    const afterState = {
+                        timestamp: new Date().toISOString(),
+                        widgetCount: this.widgets ? this.widgets.length : 0,
+                        widgetPositions: {},
+                        widgetValues: {}
+                    };
+
+                    if (this.widgets) {
+                        this.widgets.forEach((widget, index) => {
+                            afterState.widgetPositions[widget.name] = index;
+                            afterState.widgetValues[widget.name] = widget.value;
+                        });
+                    }
+
+                    visibilityLogger.debug('[DESERIALIZE-AFTER] Widget state:', afterState);
+
+                    // Detect position changes (potential corruption source)
+                    Object.keys(beforeState.widgetPositions).forEach(widgetName => {
+                        const beforeIndex = beforeState.widgetPositions[widgetName];
+                        const afterIndex = afterState.widgetPositions[widgetName];
+                        if (beforeIndex !== afterIndex) {
+                            visibilityLogger.warn(`[DESERIALIZE] Widget position changed: ${widgetName} moved from index ${beforeIndex} → ${afterIndex}`);
+                        }
+                    });
+
+                    // Validate combo widgets after workflow load (v0.5.0 corruption protection)
+                    // This catches corruption that happens during serialization/deserialization
+                    const comboWidgetsToValidate = ['output_image_mode', 'fill_type', 'fill_color'];
+                    comboWidgetsToValidate.forEach(widgetName => {
+                        const widget = this.widgets.find(w => w.name === widgetName);
+                        if (widget && widget.value !== undefined) {
+                            const validation = validateWidgetValue(widgetName, widget.value, 'workflow-load');
+                            if (!validation.valid) {
+                                logCorruptionDiagnostics(validation.warnings, {
+                                    widget: widgetName,
+                                    loadedValue: widget.value,
+                                    widgetIndex: this.widgets.indexOf(widget),
+                                    operation: 'configure (workflow load)',
+                                    workflowInfo: {
+                                        hasWidgetsValues: !!info.widgets_values,
+                                        widgetsValuesCount: info.widgets_values ? info.widgets_values.length : 0
+                                    },
+                                    beforeState: beforeState,
+                                    afterState: afterState
+                                });
+                                widget.value = validation.correctedValue;
+                                logger.info(`[Validation-workflow-load] Corrected ${widgetName}: ${widget.value} → ${validation.correctedValue}`);
+                            }
+                        }
+                    });
                 }
 
                 logger.groupEnd();
