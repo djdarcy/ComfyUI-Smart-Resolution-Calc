@@ -81,6 +81,56 @@ const WIDGET_SCHEMAS = {
         default: "#808080",
         validator: (v) => /^#?[0-9A-Fa-f]{6}$/.test(v),
         description: "Custom fill color (hex format)"
+    },
+    batch_size: {
+        default: 1,
+        validator: (v) => typeof v === 'number' && !isNaN(v) && v >= 1 && Number.isInteger(v),
+        description: "Batch size (positive integer)"
+    },
+    scale: {
+        default: 1,
+        validator: (v) => typeof v === 'number' && !isNaN(v) && v > 0,
+        description: "Scale factor (positive number)"
+    },
+    divisible_by: {
+        validValues: ["8", "16", "32", "64"],
+        default: "16",
+        description: "Dimension divisibility constraint"
+    },
+    custom_ratio: {
+        default: false,
+        validator: (v) => typeof v === 'boolean',
+        description: "Whether to use custom aspect ratio"
+    },
+    dimension_megapixel: {
+        default: {on: false, value: 1},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 0.1 && v.value <= 100; // Reasonable megapixel range
+        },
+        description: "Dimension megapixel control (object with on/value)"
+    },
+    dimension_width: {
+        default: {on: false, value: 1920},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 64 && v.value <= 16384; // Reasonable pixel range
+        },
+        description: "Dimension width control (object with on/value)"
+    },
+    dimension_height: {
+        default: {on: false, value: 1080},
+        validator: (v) => {
+            if (typeof v !== 'object' || v === null) return false;
+            if (typeof v.on !== 'boolean') return false;
+            if (typeof v.value !== 'number' || isNaN(v.value)) return false;
+            return v.value >= 64 && v.value <= 16384; // Reasonable pixel range
+        },
+        description: "Dimension height control (object with on/value)"
     }
 };
 
@@ -101,8 +151,12 @@ function validateWidgetValue(widgetName, value, context = "unknown") {
         return { valid: true, correctedValue: value, warnings };
     }
 
-    // Check for object values (previous corruption pattern)
-    if (typeof value === 'object' && value !== null) {
+    // Check for object values (corruption pattern for widgets that should have primitives)
+    // BUT: Some widgets (like DimensionWidgets) legitimately have object values
+    const schemaExpectsObject = typeof schema.default === 'object' && schema.default !== null;
+
+    if (typeof value === 'object' && value !== null && !schemaExpectsObject) {
+        // Object value for a widget that should have primitive value = corruption
         warnings.push(`⚠️ CORRUPTION DETECTED [${context}]: ${widgetName} has object value (should be primitive)`);
         warnings.push(`   Context: ${context}`);
         warnings.push(`   Value type: ${typeof value}`);
@@ -4086,8 +4140,58 @@ app.registerExtension({
                     onConfigure.apply(this, arguments);
                 }
 
-                // Restore widget values from saved workflow
-                if (info.widgets_values) {
+                // === PHASE 2a: NAME-BASED RESTORE (v0.5.1) ===
+                // Fix corruption by restoring widget values by name instead of index
+                // Uses serialization diagnostics to map widget names to their saved values
+                if (info.widgets_config && info.widgets_config._serialization_diagnostics && info.widgets_values) {
+                    const diagnostics = info.widgets_config._serialization_diagnostics;
+                    visibilityLogger.info('[NAME-BASED-RESTORE] Using serialization diagnostics to restore by name');
+
+                    // Build name→value map from save-time widget positions
+                    const valuesByName = {};
+                    Object.keys(diagnostics.widgetPositions).forEach(widgetName => {
+                        const savedIndex = diagnostics.widgetPositions[widgetName];
+                        if (savedIndex < info.widgets_values.length) {
+                            valuesByName[widgetName] = info.widgets_values[savedIndex];
+                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Mapped ${widgetName} from saved index ${savedIndex}`);
+                        }
+                    });
+
+                    // Restore values by name (current positions may differ from save time)
+                    let restoredCount = 0;
+                    let skippedCount = 0;
+                    this.widgets.forEach(widget => {
+                        if (valuesByName[widget.name] !== undefined) {
+                            const savedValue = valuesByName[widget.name];
+                            const currentIndex = this.widgets.indexOf(widget);
+
+                            // Log position changes (indicates why index-based would corrupt)
+                            const savedIndex = diagnostics.widgetPositions[widget.name];
+                            if (savedIndex !== currentIndex) {
+                                visibilityLogger.info(`[NAME-BASED-RESTORE] ${widget.name} position changed: saved index ${savedIndex} → current index ${currentIndex}`);
+                            }
+
+                            // Restore value (will be validated later)
+                            widget.value = savedValue;
+                            restoredCount++;
+                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Restored ${widget.name} = ${JSON.stringify(savedValue)}`);
+                        } else {
+                            skippedCount++;
+                            visibilityLogger.debug(`[NAME-BASED-RESTORE] Skipped ${widget.name} (not in diagnostics, keeping current value)`);
+                        }
+                    });
+
+                    visibilityLogger.info(`[NAME-BASED-RESTORE] Restored ${restoredCount} widgets by name, skipped ${skippedCount}`);
+                }
+
+                // Restore widget values from saved workflow (old heuristic method for workflows without diagnostics)
+                // NOTE: If name-based restore succeeded above, this section is skipped to avoid double-restoration
+                const useNameBasedRestore = !!(info.widgets_config && info.widgets_config._serialization_diagnostics);
+                if (info.widgets_values && !useNameBasedRestore) {
+                    // Fallback for old workflows without diagnostics - use type-based heuristic matching
+                    visibilityLogger.info('[FALLBACK-RESTORE] No serialization diagnostics - using old heuristic restore (may corrupt)');
+                    visibilityLogger.info('[FALLBACK-RESTORE] Please re-save workflow to enable name-based restore');
+
                     // Restore ImageModeWidget (has {on, value} structure)
                     const imageModeWidgets = this.widgets.filter(w => w instanceof ImageModeWidget);
                     const imageModeValues = info.widgets_values.filter(v => v && typeof v === 'object' && 'on' in v && 'value' in v && typeof v.value === 'number' && v.value <= 1);
@@ -4158,13 +4262,15 @@ app.registerExtension({
                         const beforeIndex = beforeState.widgetPositions[widgetName];
                         const afterIndex = afterState.widgetPositions[widgetName];
                         if (beforeIndex !== afterIndex) {
-                            visibilityLogger.warn(`[DESERIALIZE] Widget position changed: ${widgetName} moved from index ${beforeIndex} → ${afterIndex}`);
+                            visibilityLogger.info(`[DESERIALIZE] Widget position changed: ${widgetName} moved from index ${beforeIndex} → ${afterIndex}`);
                         }
                     });
 
                     // Validate combo widgets after workflow load (v0.5.0 corruption protection)
                     // This catches corruption that happens during serialization/deserialization
-                    const comboWidgetsToValidate = ['output_image_mode', 'fill_type', 'fill_color'];
+                    const comboWidgetsToValidate = ['output_image_mode', 'fill_type', 'fill_color',
+                                                     'batch_size', 'scale', 'divisible_by', 'custom_ratio',
+                                                     'dimension_megapixel', 'dimension_width', 'dimension_height'];
                     comboWidgetsToValidate.forEach(widgetName => {
                         const widget = this.widgets.find(w => w.name === widgetName);
                         if (widget && widget.value !== undefined) {
