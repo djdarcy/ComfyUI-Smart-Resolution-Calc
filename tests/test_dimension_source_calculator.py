@@ -643,6 +643,47 @@ def test_edge_case_invalid_custom_ar():
     print("\n✅ Edge case test PASSED")
 
 
+def test_edge_case_float_custom_ar():
+    """Edge case: Float value for custom AR (regression test for AttributeError bug)"""
+    print("\n" + "="*60)
+    print("TEST: Edge Case - Float Custom AR (Regression)")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': True,
+        'width_value': 1920,
+        'height_enabled': False,
+        'height_value': 800,
+        'mp_enabled': False,
+        'mp_value': 1.5,
+        'image_mode_enabled': False,
+        'image_mode_value': 0,
+        'custom_ratio_enabled': True,
+        'custom_aspect_ratio': 2.39,  # Float instead of string "2.39:1" - should not crash
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, None)
+
+    print(f"Mode: {result['mode']}")
+    print(f"Priority: {result['priority']}")
+    print(f"Dimensions: {result['baseW']}×{result['baseH']}")
+    print(f"Source: {result['source']}")
+    print(f"Aspect Ratio: {result['ar']['aspectW']}:{result['ar']['aspectH']}")
+    print(f"Description: {result['description']}")
+    print(f"Active Sources: {result['activeSources']}")
+
+    # Should use width_with_ar mode (Priority 5a)
+    assert result['mode'] == 'width_with_ar', f"Expected mode 'width_with_ar', got '{result['mode']}'"
+
+    # Float "2.39" doesn't match "W:H" pattern, so should fall back to 16:9
+    assert result['ar']['aspectW'] == 16, f"Expected fallback aspectW 16, got {result['ar']['aspectW']}"
+    assert result['ar']['aspectH'] == 9, f"Expected fallback aspectH 9, got {result['ar']['aspectH']}"
+
+    print("\n✅ Edge case test PASSED (no AttributeError on float input)")
+
+
 def run_all_tests():
     """Run all test cases"""
     print("\n" + "="*60)
@@ -663,6 +704,7 @@ def run_all_tests():
         ("Priority 6: Defaults", test_priority_6_defaults),
         ("Edge Case: Missing Image", test_edge_case_missing_image),
         ("Edge Case: Invalid Custom AR", test_edge_case_invalid_custom_ar),
+        ("Edge Case: Float Custom AR", test_edge_case_float_custom_ar),
     ]
 
     passed = 0

@@ -431,6 +431,10 @@ class DimensionSourceCalculator:
         """Parse custom aspect ratio text (e.g. '16:9' or '2.39:1')"""
         import re
 
+        # Handle case where text is a number instead of string (widget value bug)
+        if not isinstance(text, str):
+            text = str(text)
+
         # Match patterns like "16:9" or "2.39:1"
         match = re.match(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$', text.strip())
         if match:
