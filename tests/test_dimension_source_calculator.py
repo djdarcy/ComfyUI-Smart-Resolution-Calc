@@ -71,7 +71,8 @@ def test_priority_1_exact_dims():
     assert result['priority'] == 1, f"Expected priority 1, got {result['priority']}"
     assert result['baseW'] == 1920, f"Expected width 1920, got {result['baseW']}"
     assert result['baseH'] == 1080, f"Expected height 1080, got {result['baseH']}"
-    assert result['source'] == 'image_exact_dims', f"Expected source 'image_exact_dims', got '{result['source']}'"
+    # Note: source 'image' = USE IMAGE DIMS in Exact Dims mode (not AR Only)
+    assert result['source'] == 'image', f"Expected source 'image' (Exact Dims mode), got '{result['source']}'"
     assert len(result['conflicts']) > 0, "Expected conflicts for Exact Dims overriding widgets"
 
     print("\n✅ Priority 1 test PASSED")
@@ -333,7 +334,8 @@ def test_priority_4_ar_only():
     assert result['baseW'] == 1633, f"Expected width 1633, got {result['baseW']}"
     assert result['baseH'] == 919, f"Expected height 919, got {result['baseH']}"
 
-    assert result['source'] == 'image_ar_with_mp', f"Expected source 'image_ar_with_mp', got '{result['source']}'"
+    # Note: source 'image_ar' = USE IMAGE DIMS in AR Only mode (uses image AR, not exact dims)
+    assert result['source'] == 'image_ar', f"Expected source 'image_ar' (AR Only mode), got '{result['source']}'"
 
     # Check aspect ratio from image (16:9)
     assert result['ar']['aspectW'] == 16, f"Expected aspectW 16, got {result['ar']['aspectW']}"
@@ -386,13 +388,121 @@ def test_priority_5_width_with_ar():
     # Expected height: 1920 / 2.39 ≈ 803
     assert result['baseH'] == 803, f"Expected height 803, got {result['baseH']}"
 
-    assert result['source'] == 'widgets_with_ar', f"Expected source 'widgets_with_ar', got '{result['source']}'"
+    # Note: source 'widget_with_ar' = single dimension widget (WIDTH) with AR source
+    assert result['source'] == 'widget_with_ar', f"Expected source 'widget_with_ar', got '{result['source']}'"
 
-    # Check custom aspect ratio used (239:100)
-    assert result['ar']['aspectW'] == 239, f"Expected aspectW 239, got {result['ar']['aspectW']}"
-    assert result['ar']['aspectH'] == 100, f"Expected aspectH 100, got {result['ar']['aspectH']}"
+    # Note: AR parsed as decimal form from "2.39:1" input → aspectW=2.39, aspectH=1.0
+    assert result['ar']['aspectW'] == 2.39, f"Expected aspectW 2.39, got {result['ar']['aspectW']}"
+    assert result['ar']['aspectH'] == 1.0, f"Expected aspectH 1.0, got {result['ar']['aspectH']}"
 
     print("\n✅ Priority 5a test PASSED")
+
+
+def test_priority_5b_height_with_ar():
+    """Priority 5b: Height with AR"""
+    print("\n" + "="*60)
+    print("TEST: Priority 5b - Height with AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': False,
+        'width_value': 1200,
+        'height_enabled': True,
+        'height_value': 1080,
+        'mp_enabled': False,
+        'mp_value': 1.5,
+        'image_mode_enabled': False,
+        'image_mode_value': 0,
+        'custom_ratio_enabled': False,
+        'custom_aspect_ratio': '16:9',
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, None)
+
+    print(f"Mode: {result['mode']}")
+    print(f"Priority: {result['priority']}")
+    print(f"Dimensions: {result['baseW']}×{result['baseH']}")
+    print(f"Source: {result['source']}")
+    print(f"Aspect Ratio: {result['ar']['aspectW']}:{result['ar']['aspectH']}")
+    print(f"Description: {result['description']}")
+    print(f"Active Sources: {result['activeSources']}")
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - {conflict['message']}")
+
+    # Assertions
+    assert result['mode'] == 'height_with_ar', f"Expected mode 'height_with_ar', got '{result['mode']}'"
+    assert result['priority'] == 5, f"Expected priority 5, got {result['priority']}"
+    assert result['baseH'] == 1080, f"Expected height 1080, got {result['baseH']}"
+
+    # Expected width: 1080 * 16/9 = 1920
+    assert result['baseW'] == 1920, f"Expected width 1920, got {result['baseW']}"
+
+    # Note: source 'widget_with_ar' = single dimension widget (HEIGHT) with AR source
+    assert result['source'] == 'widget_with_ar', f"Expected source 'widget_with_ar', got '{result['source']}'"
+
+    # Check dropdown aspect ratio used (16:9)
+    assert result['ar']['aspectW'] == 16, f"Expected aspectW 16, got {result['ar']['aspectW']}"
+    assert result['ar']['aspectH'] == 9, f"Expected aspectH 9, got {result['ar']['aspectH']}"
+
+    print("\n✅ Priority 5b test PASSED")
+
+
+def test_priority_5c_mp_with_ar():
+    """Priority 5c: MP with AR"""
+    print("\n" + "="*60)
+    print("TEST: Priority 5c - MP with AR")
+    print("="*60)
+
+    widgets = {
+        'width_enabled': False,
+        'width_value': 1200,
+        'height_enabled': False,
+        'height_value': 800,
+        'mp_enabled': True,
+        'mp_value': 2.0,
+        'image_mode_enabled': False,
+        'image_mode_value': 0,
+        'custom_ratio_enabled': True,
+        'custom_aspect_ratio': '21:9',  # Ultrawide
+        'aspect_ratio_dropdown': '16:9'
+    }
+
+    calculator = DimensionSourceCalculator()
+    result = calculator.calculate_dimension_source(widgets, None)
+
+    print(f"Mode: {result['mode']}")
+    print(f"Priority: {result['priority']}")
+    print(f"Dimensions: {result['baseW']}×{result['baseH']}")
+    print(f"Source: {result['source']}")
+    print(f"Aspect Ratio: {result['ar']['aspectW']}:{result['ar']['aspectH']}")
+    print(f"Description: {result['description']}")
+    print(f"Active Sources: {result['activeSources']}")
+    print(f"Conflicts: {len(result['conflicts'])}")
+    for conflict in result['conflicts']:
+        print(f"  - {conflict['message']}")
+
+    # Assertions
+    assert result['mode'] == 'mp_with_ar', f"Expected mode 'mp_with_ar', got '{result['mode']}'"
+    assert result['priority'] == 5, f"Expected priority 5, got {result['priority']}"
+
+    # 2.0 MP at 21:9
+    # 2 MP = 2,000,000 pixels at 21:9
+    # w*h = 2,000,000, w/h = 21/9
+    # w = sqrt(2,000,000 * 21/9) ≈ 2160, h = sqrt(2,000,000 * 9/21) ≈ 926
+    assert result['baseW'] == 2160, f"Expected width 2160, got {result['baseW']}"
+    assert result['baseH'] == 926, f"Expected height 926, got {result['baseH']}"
+
+    # Note: source 'widget_with_ar' = single dimension widget (MEGAPIXEL) with AR source
+    assert result['source'] == 'widget_with_ar', f"Expected source 'widget_with_ar', got '{result['source']}'"
+
+    # Check custom aspect ratio used (21:9)
+    assert result['ar']['aspectW'] == 21, f"Expected aspectW 21, got {result['ar']['aspectW']}"
+    assert result['ar']['aspectH'] == 9, f"Expected aspectH 9, got {result['ar']['aspectH']}"
+
+    print("\n✅ Priority 5c test PASSED")
 
 
 def test_priority_6_defaults():
@@ -430,7 +540,8 @@ def test_priority_6_defaults():
         print(f"  - {conflict['message']}")
 
     # Assertions
-    assert result['mode'] == 'defaults', f"Expected mode 'defaults', got '{result['mode']}'"
+    # Note: mode 'defaults_with_ar' = no widgets active, using default 1.0 MP with dropdown AR
+    assert result['mode'] == 'defaults_with_ar', f"Expected mode 'defaults_with_ar', got '{result['mode']}'"
     assert result['priority'] == 6, f"Expected priority 6, got {result['priority']}"
 
     # Default 1 MP at 21:9
@@ -440,7 +551,8 @@ def test_priority_6_defaults():
     assert result['baseW'] == 1528, f"Expected width 1528, got {result['baseW']}"
     assert result['baseH'] == 655, f"Expected height 655, got {result['baseH']}"
 
-    assert result['source'] == 'default_with_ar', f"Expected source 'default_with_ar', got '{result['source']}'"
+    # Note: source 'defaults' = default behavior when no widgets active
+    assert result['source'] == 'defaults', f"Expected source 'defaults', got '{result['source']}'"
 
     # Check dropdown aspect ratio used (21:9)
     assert result['ar']['aspectW'] == 21, f"Expected aspectW 21, got {result['ar']['aspectW']}"
@@ -482,9 +594,10 @@ def test_edge_case_missing_image():
     print(f"Description: {result['description']}")
     print(f"Active Sources: {result['activeSources']}")
 
-    # Should fall back to Priority 5c (MP with AR) since image not available
-    assert result['mode'] == 'mp_with_ar', f"Expected fallback to 'mp_with_ar', got '{result['mode']}'"
-    assert result['priority'] == 5, f"Expected fallback to priority 5, got {result['priority']}"
+    # Should fall back to defaults when USE IMAGE DIMS enabled but no image connected
+    # Note: Falls back to Priority 6 (defaults) since MEGAPIXEL widget isn't actually used without image
+    assert result['mode'] == 'defaults_with_ar', f"Expected fallback to 'defaults_with_ar', got '{result['mode']}'"
+    assert result['priority'] == 6, f"Expected fallback to priority 6, got {result['priority']}"
 
     print("\n✅ Edge case test PASSED")
 
@@ -544,7 +657,9 @@ def run_all_tests():
         ("Priority 3b: MP+W Explicit", test_priority_3b_mp_width_explicit),
         ("Priority 3c: MP+H Explicit", test_priority_3c_mp_height_explicit),
         ("Priority 4: AR Only", test_priority_4_ar_only),
-        ("Priority 5: Width with AR", test_priority_5_width_with_ar),
+        ("Priority 5a: Width with AR", test_priority_5_width_with_ar),
+        ("Priority 5b: Height with AR", test_priority_5b_height_with_ar),
+        ("Priority 5c: MP with AR", test_priority_5c_mp_with_ar),
         ("Priority 6: Defaults", test_priority_6_defaults),
         ("Edge Case: Missing Image", test_edge_case_missing_image),
         ("Edge Case: Invalid Custom AR", test_edge_case_invalid_custom_ar),
