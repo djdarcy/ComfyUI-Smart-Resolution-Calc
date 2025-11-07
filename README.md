@@ -13,7 +13,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
-*Example workflow showing the Smart Resolution Calculator with disabled "image "input (AR Only mode), custom aspect ratio 5.225:2.25, HEIGHT enabled at 1200, SCALE at 1.25x, calculating width and outputting 3488×1504 available through the latent to be sent to KSampler.*
+*Example workflow showing the Smart Resolution Calculator with disabled "image" input (AR Only mode), custom aspect ratio 5.2:2.5, WIDTH enabled at 1024, SCALE at 1.10x, calculating height and outputting 1120×1408 available through "image" or "latent" to be sent to KSampler.*
 
 ## Features
 

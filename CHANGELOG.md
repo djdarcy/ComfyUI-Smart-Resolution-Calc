@@ -5,6 +5,84 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2025-11-07
+
+### Changed
+- **Default Widget Values** - Updated defaults to more appropriate values for modern SD models and better user experience
+  - **Backend Defaults** (`py/smart_resolution_calc.py`):
+    - `custom_aspect_ratio`: Changed from `16:9` to `5.2:2.5` (wider landscape presentation format)
+    - `fill_color`: Changed from `#808080` (medium gray) to `#522525` (dark red/brown)
+    - `divisible_by`: Kept at 16 (safe for SD1.5/SDXL/Flux/Illustrious)
+  - **Frontend Widget Defaults** (`web/smart_resolution_calc.js`):
+    - `IMAGE MODE` toggle: Changed from ON to OFF (disabled by default for manual workflow)
+    - `WIDTH`: Changed from 1920 to 1024 (standard SD resolution)
+    - `HEIGHT`: Changed from 1080 to 1024 (standard SD resolution - square format default)
+  - **Validation Schemas** (`WIDGET_SCHEMAS`):
+    - Updated healing defaults to match new values (for workflow corruption self-healing)
+
+### Improved
+- **Documentation** - Updated README.md screenshot caption to reflect new default values
+  - Caption now shows: "custom aspect ratio 5.2:2.5, WIDTH enabled at 1024, SCALE at 1.10x, calculating height and outputting 1120×1408"
+  - More accurately represents typical usage with new defaults
+
+### Technical
+- **Default Value Application Points**:
+  - New nodes created by users (initial widget creation)
+  - Corrupted workflows being healed by validation system
+  - All self-healing fallback scenarios (corrupt value detection)
+- **Three-layer consistency**: Backend INPUT_TYPES, frontend widget construction, validation schema defaults all synchronized
+
+### Rationale
+- **Standard Resolution Default**: 1024×1024 is more universally compatible with modern SD models (SD1.5, SDXL, Flux, Illustrious)
+- **Manual-first Workflow**: IMAGE MODE OFF by default encourages manual dimension control (users can enable for reference images)
+- **Wider Landscape**: 5.2:2.5 (~2.08:1) provides cinematic/presentation aspect ratio option beyond standard 16:9
+- **Visual Distinction**: Dark red fill color provides better visual contrast than gray for debugging/testing
+
+### Notes
+- No breaking changes to existing workflows (only affects new nodes and corrupted workflow healing)
+- All existing workflows preserve their saved values
+- Validation system ensures consistency across all three default layers
+
+## [0.5.3] - 2025-11-07
+
+### Fixed
+- **Logging Performance Overhead** - Eliminated performance impact of debug logging for normal users
+  - Applied guards (`if (logger.debugEnabled)`) around all expensive logging operations
+  - Protected JSON.stringify calls in per-widget restore loops (4 locations)
+  - Protected large object logging (8 locations)
+  - Protected template literal evaluations (15+ locations)
+
+### Performance
+- **Benchmark Results** (200K operations, 20 widgets):
+  - Unguarded logging: +112.31% overhead (13.80ms vs 6.50ms baseline)
+  - Guarded logging: -6.15% overhead (6.10ms vs 6.50ms baseline)
+  - Argument evaluation cost: +87.67% (JSON.stringify + template literals)
+  - **Result**: Zero-cost logging for normal users with debug disabled
+
+### Technical
+- **Root Cause**: JavaScript evaluates function arguments before calling functions
+  - Even with early return in logger.debug(), expensive operations execute
+  - JSON.stringify and template literals evaluated before method call
+- **Solution**: Conditional guards prevent argument evaluation entirely
+  - Pattern: `if (logger.debugEnabled) { logger.debug(...) }`
+  - Applied to all logging with expensive arguments (JSON.stringify, template literals, large objects)
+- **Test Infrastructure**: Created cross-platform performance testing framework
+  - `tests/one-offs/performance/test_logging_performance.html` - Synthetic benchmark
+  - `tests/one-offs/run_performance_tests.py` - Cross-platform test runner (Windows/Linux/macOS)
+  - `tests/one-offs/clean_performance_tests.py` - Test cleanup utility
+  - Tests copy to `web/tests/` temporarily (gitignored, not distributed)
+
+### Fixed
+- **Pre-commit Hook Pattern Matching** - Fixed false positive blocking test files
+  - Changed `^.*.log` to `^.*\.log$` (escaped dot + end anchor)
+  - Hook was matching substring `.log` in `test_logging_performance.html`
+  - Now correctly matches only files ending in `.log` extension
+
+### Notes
+- No user-facing changes (debug mode only)
+- Performance tests validate logging has zero impact with debug disabled
+- Design doc: Performance testing methodology in `tests/one-offs/`
+
 ## [0.4.15] - 2025-11-07
 
 ### Added
