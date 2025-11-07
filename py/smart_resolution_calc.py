@@ -609,7 +609,7 @@ class SmartResolutionCalc:
                     "multiline": False,
                     "tooltip": "Shows current dimension calculation mode (updated automatically, read-only)"
                 }),
-                "custom_aspect_ratio": ("STRING", {"default": "16:9"}),
+                "custom_aspect_ratio": ("STRING", {"default": "5.2:2.5"}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
                 "scale": ("FLOAT", {
                     "default": 1.0,
@@ -629,7 +629,7 @@ class SmartResolutionCalc:
                     "tooltip": "Fill pattern for empty images:\n• black: Solid black (#000000)\n• white: Solid white (#FFFFFF)\n• custom_color: Use fill_color hex value\n• noise: Gaussian noise (camera-like, centered around gray)\n• random: Uniform random pixels (TV static, full color range)"
                 }),
                 "fill_color": ("STRING", {
-                    "default": "#808080",
+                    "default": "#522525",
                     "tooltip": "Hex color code for custom_color fill type.\nFormat: #RRGGBB (e.g., #FF0000=red, #00FF00=green, #0000FF=blue)\nWith or without # prefix. Only used when fill_type is 'custom_color'."
                 }),
             },

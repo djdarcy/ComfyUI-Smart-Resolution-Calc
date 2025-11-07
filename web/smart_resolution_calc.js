@@ -78,7 +78,7 @@ const WIDGET_SCHEMAS = {
         description: "Fill type for image transformations"
     },
     fill_color: {
-        default: "#808080",
+        default: "#522525",
         validator: (v) => /^#?[0-9A-Fa-f]{6}$/.test(v),
         description: "Custom fill color (hex format)"
     },
@@ -113,7 +113,7 @@ const WIDGET_SCHEMAS = {
         description: "Dimension megapixel control (object with on/value)"
     },
     dimension_width: {
-        default: {on: false, value: 1920},
+        default: {on: false, value: 1024},
         validator: (v) => {
             if (typeof v !== 'object' || v === null) return false;
             if (typeof v.on !== 'boolean') return false;
@@ -123,7 +123,7 @@ const WIDGET_SCHEMAS = {
         description: "Dimension width control (object with on/value)"
     },
     dimension_height: {
-        default: {on: false, value: 1080},
+        default: {on: false, value: 1024},
         validator: (v) => {
             if (typeof v !== 'object' || v === null) return false;
             if (typeof v.on !== 'boolean') return false;
@@ -2585,7 +2585,7 @@ class ImageModeWidget {
         this.name = name;
         this.type = "custom";
         this.value = {
-            on: true,   // Default: enabled
+            on: false,  // Default: disabled
             value: 0    // 0 = AR Only, 1 = Exact Dims
         };
 
@@ -3455,11 +3455,11 @@ app.registerExtension({
                     valueBehavior: ValueBehavior.ALWAYS,
                     tooltipContent: TOOLTIP_CONTENT.megapixel  // Add tooltip for MEGAPIXEL
                 });
-                const widthWidget = new DimensionWidget("dimension_width", 1920, true, {
+                const widthWidget = new DimensionWidget("dimension_width", 1024, true, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
                     valueBehavior: ValueBehavior.ALWAYS
                 });
-                const heightWidget = new DimensionWidget("dimension_height", 1080, true, {
+                const heightWidget = new DimensionWidget("dimension_height", 1024, true, {
                     toggleBehavior: ToggleBehavior.SYMMETRIC,
                     valueBehavior: ValueBehavior.ALWAYS
                 });
