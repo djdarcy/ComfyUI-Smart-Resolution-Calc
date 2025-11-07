@@ -5,6 +5,267 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.15] - 2025-11-07
+
+### Added
+- **Conflict Severity Visualization** - MODE widget background color indicates conflict severity
+  - Yellow background (`#3a3000`) when WARNING severity conflicts present
+  - Gray background (`#2a2a2a`) for INFO severity conflicts (unchanged)
+  - Visual at-a-glance indication of which conflicts require attention vs informational
+- **AR Ratio in MODE Display** - MODE widget now always shows simplified aspect ratio
+  - Format: `"MEGAPIXEL & aspect_ratio (16:9)"` instead of just `"MEGAPIXEL & aspect_ratio"`
+  - Label changed from `"Mode:"` to `"Mode(AR):"`
+  - Uses exact AR from Python API to avoid rounding errors (e.g., shows `3:4` not `866:1155`)
+- **Shortened MODE Text** - More compact labels to reduce node width requirements
+  - "USE IMAGE DIMS AR Only" → "IMG AR Only"
+  - "Image Exact Dims" → "IMG Exact Dims"
+
+### Changed
+- **MODE Tooltip UX** - Removed 2-second auto-hide timeout, tooltips stay visible while hovering
+  - Label tooltip: Uses native ComfyUI tooltip system
+  - Status tooltip: Custom conflict tooltip (only shows when conflicts exist)
+  - Tooltips only hide when mouse leaves widget bounds
+
+### Fixed
+- **Duplicate Tooltip Issue** - Eliminated duplicate tooltips on label hover
+  - Native tooltip via `this.tooltip` property for label
+  - Custom tooltip only for status section with conflicts
+  - Removed redundant `drawLabelTooltip()` method
+- **Image Refresh Bug** - Dimension toggle changes now refresh image data when image connected
+  - DimensionWidget toggles (WIDTH, HEIGHT, MEGAPIXEL) now trigger image dimension refresh
+  - Ensures MODE display updates when image input source changes
+  - Only refreshes when image connected and USE_IMAGE enabled
+
+### Technical
+- **ModeStatusWidget enhancements** (`web/smart_resolution_calc.js` lines 1712-2009):
+  - Severity-based background color logic (lines 1735-1748)
+  - AR ratio extraction with GCD simplification (lines 1081-1127)
+  - Prefers `dimSource.ar.aspectW/aspectH` from Python API over local calculation
+  - Separate tooltip zones for label vs status
+- **ScaleWidget AR helpers**:
+  - `_gcd()` - Greatest common divisor calculation (lines 1081-1090)
+  - `_getSimplifiedRatio()` - Reduces ratios to simplest form (lines 1095-1110)
+  - `_getARRatio()` - Extracts AR from dimension source (lines 1115-1127)
+- **DimensionWidget image refresh** (lines 2249-2261):
+  - Calls `refreshImageDimensions()` when toggle changes
+  - Checks image connection and USE_IMAGE state before refreshing
+
+### Notes
+- Severity classification logic already existed in Python backend (no backend changes)
+- Addresses Issue #12 (widget conflict detection UI)
+- Addresses Issue #20 (conflict warning UI design - Option A implemented)
+- Created Issue #28 (future declarative conflict resolution system)
+- Created Issue #29 (low-priority tooltip positioning quirk)
+- Design docs: `2025-11-06__19-46-23__conflict-severity-visualization-enhancement.md`, `2025-11-07__00-20-47__context-postmortem_v0.4.15-conflict-severity-ui.md`
+
+## [0.4.14] - 2025-11-06
+
+### Changed
+- **Test Infrastructure** - Improved testing framework for MP modes validation
+  - Confirms WIDTH+MEGAPIXEL and HEIGHT+MEGAPIXEL modes working correctly
+  - Enhanced test coverage for all priority levels
+
+### Technical
+- Test suite enhancements for dimension source calculator
+- Validation of megapixel-based calculation modes
+
+### Notes
+- No user-facing changes, internal testing improvements only
+- Verifies v0.4.11 fixes are working correctly
+
+## [0.4.13] - 2025-11-06
+
+### Changed
+- **Architecture Change: True Consolidation** (Issue #27) - Python is now single source of truth
+  - JavaScript calls Python API endpoint instead of duplicating calculation logic
+  - **Code reduction**: JavaScript dimension logic reduced from 543 lines to 171 lines (68% reduction)
+  - Eliminates entire class of drift bugs (v0.4.11 bug now impossible)
+  - Tooltip and execution now guaranteed to match (same Python calculation)
+
+### Added
+- **Python API Endpoint**: `/smart-resolution/calculate-dimensions` for dimension calculations
+  - Accepts widget state and runtime context
+  - Returns complete dimension source info (mode, baseW/H, AR, conflicts)
+  - Single source of truth for all dimension calculations
+
+### Fixed
+- **custom_ratio Toggle Updates** - MODE widget now updates when custom_ratio toggled
+  - Root cause: Reading `.value.on` (dimension widget pattern) instead of `.value` (toggle widget pattern)
+  - Added debug logging for widget state serialization
+  - All widget callbacks now properly async to await API responses
+
+### Technical
+- **Backend** (`py/smart_resolution_calc.py`):
+  - Added `calculate_dimensions_api()` static method (lines 724-786)
+  - Uses existing `DimensionSourceCalculator` class from prep work
+- **Frontend** (`web/managers/dimension_source_manager.js`):
+  - Made `getActiveDimensionSource()` async
+  - Removed 397 lines of duplicate calculation logic
+  - Serializes widget state for API calls
+- **API Contract**:
+  - Request: widget state + runtime context (image dimensions)
+  - Response: complete dimension source info with conflicts
+- **Error Handling**: Fallback to 1024×1024 if API fails
+
+### Benefits
+- **Single Source of Truth**: All calculations in Python
+- **WYSIWYG Guaranteed**: Tooltip always matches execution
+- **Maintainability**: Changes made once, affect tooltip + execution
+- **Testability**: Test Python once, validates entire system
+- **Drift Prevention**: JavaScript/Python cannot get out of sync
+
+### Related Issues
+- Completes Issue #27 (long-term consolidation strategy)
+- Completes Issue #19 (Python backend parity)
+- Advances Issue #15 (8/11 subtasks complete)
+
+### Breaking Changes
+None - API is internal, no user-facing changes
+
+## [0.4.12] - 2025-11-06
+
+### Fixed
+- **Scale/Divisibility Rounding** - Unified rounding behavior between tooltip and execution
+  - Root cause: JavaScript used `Math.round()` on floats, Python used `round()` on truncated ints
+  - Now both maintain float precision through scaling before rounding
+  - Example fix: WIDTH=1080, MEGAPIXEL=1.0, SCALE=1.1x now shows 1184×1016 in both tooltip and final output
+  - Eliminates 4-8 pixel discrepancies in divisibility rounding
+
+### Technical
+- **Python Changes** (`py/smart_resolution_calc.py` lines 490-491):
+  - Removed premature `int()` conversion after scaling
+  - Now: `round(scaled_width / divisible_by) * divisible_by`
+  - Was: `round(int(scaled_width) / divisible_by) * divisible_by`
+- **JavaScript Already Correct**: Kept float precision throughout
+- **Banker's Rounding**: Both now use same IEEE 754 round-half-to-even behavior
+
+### Notes
+- Tooltip preview now matches actual execution pixel-perfectly
+- Fixes reported discrepancy in Issue discussion
+- Related to WYSIWYG accuracy improvements
+
+## [0.4.11] - 2025-11-06
+
+### Fixed
+- **WIDTH+MEGAPIXEL Mode AR Bug** - Fixed incorrect aspect ratio calculation
+  - Root cause: Used dropdown AR instead of computing AR from resulting dimensions
+  - Now correctly computes AR as `WIDTH : computed_HEIGHT`
+  - Example fix: WIDTH=1080 + MEGAPIXEL=1.0 now shows `540:463 AR` (from dimensions) not `3:4 AR` (from dropdown)
+- **HEIGHT+MEGAPIXEL Mode AR Bug** - Fixed same issue for HEIGHT+MEGAPIXEL
+  - Now correctly computes AR as `computed_WIDTH : HEIGHT`
+
+### Technical
+- **Python Backend** (`py/dimension_source_calculator.py`):
+  - Added AR computation in `_calculate_mp_width_explicit()` method
+  - Added AR computation in `_calculate_mp_height_explicit()` method
+  - AR now derived from final dimensions using GCD simplification
+- **JavaScript Frontend** (`web/managers/dimension_source_manager.js`):
+  - Matching AR computation in WIDTH+MEGAPIXEL path
+  - Matching AR computation in HEIGHT+MEGAPIXEL path
+
+### Notes
+- Critical bug fix - WIDTH/HEIGHT+MEGAPIXEL modes were showing wrong AR in INFO output
+- Discovered during testing of consolidation work
+- Demonstrates why consolidation is important (bug existed in both JS and Python)
+
+## [0.4.10] - 2025-11-05
+
+### Changed
+- **Unified MODE Display** - Consistent mode labels with AR source tracking
+  - All mode descriptions now show aspect ratio source explicitly
+  - Format: `"dimension_sources & ar_source (AR)"`
+  - Examples:
+    - `"WIDTH & HEIGHT (1:2)"` - Explicit dimensions
+    - `"MEGAPIXEL & aspect_ratio (16:9)"` - Megapixel with dropdown AR
+    - `"WIDTH & image_ar (1:1)"` - Width with image aspect ratio
+    - `"HEIGHT & custom_ratio (5.2:2.5)"` - Height with custom ratio
+
+### Technical
+- Updated mode label generation across all 6 priority levels
+- AR source now always included in description
+- Consistent terminology between MODE widget and INFO output
+
+## [0.4.9] - 2025-11-05
+
+### Changed
+- **MODE Widget Label** - Added clear label and improved terminology
+  - Widget label now says "MODE:" before status value
+  - Changed "AR Only" terminology to "image_ar" for consistency
+  - Example display: `"MODE: MEGAPIXEL & image_ar (1024×1024)"`
+
+### Technical
+- Label positioning and rendering updates
+- Terminology alignment with INFO output format
+
+## [0.4.8] - 2025-11-05
+
+### Added
+- **Custom Read-Only MODE Status Widget** - Persistent mode visibility without canvas corruption
+  - Implemented using native ComfyUI widget instead of custom draw cycle
+  - Positioned above aspect_ratio widget
+  - Shows current dimension calculation mode at all times
+  - Auto-updates when dimension sources change
+
+### Fixed
+- **Canvas Corruption Issue** - Resolved by using native widget approach
+  - Custom widget draw cycles were causing performance overhead at 60fps
+  - Native widget approach eliminates corruption completely
+  - Maintains WYSIWYG preview without visual artifacts
+
+### Technical
+- Native ComfyUI widget with read-only text display
+- Event-driven updates on widget changes
+- No custom draw cycle needed
+
+## [0.4.7] - 2025-11-05
+
+### Fixed
+- **WIDTH+MEGAPIXEL Mode Label** - Corrected label showing disabled HEIGHT incorrectly
+  - Root cause: Label included "HEIGHT (disabled)" when HEIGHT widget was inactive
+  - Now shows: `"WIDTH + MEGAPIXEL"` (clean, accurate)
+  - Applies to all MP combination modes
+
+### Technical
+- Mode label generation logic updated
+- Only includes actually active/relevant widgets in label
+
+## [0.4.6] - 2025-11-05
+
+### Added
+- **MODE Widget with Real-Time Updates** - First implementation of persistent mode display
+  - Shows current dimension calculation mode above aspect_ratio widget
+  - Updates immediately when any dimension-affecting widget changes
+  - Format: `"Mode: [sources] ([dimensions])"`
+
+### Fixed
+- **DimensionWidget Update Propagation** - All dimension widget changes now trigger MODE updates
+  - Added `updateModeWidget()` calls to toggle handlers (line ~1943)
+  - Added `updateModeWidget()` calls to increment/decrement handlers (lines ~1962, ~1974)
+  - Added `updateModeWidget()` calls to value edit callbacks (line ~1990)
+- **ImageModeWidget Update Propagation** - USE IMAGE DIMS changes trigger MODE updates
+  - Added `updateModeWidget()` calls to toggle handler (line ~2255)
+  - Added `updateModeWidget()` calls to mode selector handler (line ~2298)
+- **MODE Widget Image Cache Access** - Fixed MODE showing wrong mode with USE IMAGE DIMS
+  - Root cause: `updateModeWidget()` wasn't passing `imageDimensionsCache` to manager
+  - Now passes runtime context: `{imageDimensionsCache: this.imageDimensionsCache}`
+  - MODE widget now matches SCALE tooltip exactly for AR Only mode
+
+### Technical
+- **updateModeWidget() Method**:
+  - Calls `dimensionSourceManager.getActiveDimensionSource()` with runtime context
+  - Updates MODE widget text from dimension source description
+  - Invoked by all dimension-affecting widget change handlers
+- **Integration Points** (multiple locations):
+  - DimensionWidget: 4 handler locations
+  - ImageModeWidget: 2 handler locations
+  - Native widget wrappers: All wrapped callbacks
+
+### Notes
+- Completes user request for persistent mode visibility
+- MODE widget provides instant feedback without requiring SCALE hover
+- All three session bugs fixed (custom widgets, image mode, cache access)
+- Foundation for future enhancements (read-only styling, conflict indicators)
+
 ## [0.4.5] - 2025-11-04
 
 ### Added
