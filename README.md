@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![ComfyUI Registry](https://img.shields.io/badge/ComfyUI-Registry-green.svg)](https://registry.comfy.org/publishers/djdarcy/nodes/comfyui-smart-resolution-calc)
-[![GitHub release](https://img.shields.io/github/v/release/djdarcy/ComfyUI-Smart-Resolution-Calc?include_prereleases&label=version)](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases)
+[![GitHub release](https://img.shields.io/github/v/release/DazzleNodes/ComfyUI-Smart-Resolution-Calc?include_prereleases&label=version)](https://github.com/DazzleNodes/ComfyUI-Smart-Resolution-Calc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Flexible resolution and latent generation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with compact custom widgets. Specify any combination of dimensions and aspect ratio - the node calculates missing values automatically.
@@ -63,14 +63,14 @@ comfy node install comfyui-smart-resolution-calc
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc.git
+git clone https://github.com/DazzleNodes/ComfyUI-Smart-Resolution-Calc.git
 ```
 
 Then restart ComfyUI or use **Manager → Refresh Node Definitions**.
 
 ### Manual Installation
 
-1. Download the [latest release](https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc/releases) and extract to `ComfyUI/custom_nodes/ComfyUI-Smart-Resolution-Calc/`
+1. Download the [latest release](https://github.com/DazzleNodes/ComfyUI-Smart-Resolution-Calc/releases) and extract to `ComfyUI/custom_nodes/ComfyUI-Smart-Resolution-Calc/`
 2. Restart ComfyUI
 3. Find the node in: **Smart Resolution → Smart Resolution Calculator**
 
@@ -249,7 +249,7 @@ Like the project?
 ### Development Setup
 
 ```bash
-git clone https://github.com/djdarcy/ComfyUI-Smart-Resolution-Calc.git
+git clone https://github.com/DazzleNodes/ComfyUI-Smart-Resolution-Calc.git
 cd ComfyUI-Smart-Resolution-Calc
 # Copy to ComfyUI custom_nodes and restart ComfyUI
 ```
