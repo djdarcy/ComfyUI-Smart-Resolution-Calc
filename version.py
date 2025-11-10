@@ -16,18 +16,18 @@ Components:
 
 # Semantic version components
 MAJOR = 0
-MINOR = 5
-PATCH = 5
+MINOR = 6
+PATCH = 0
 
 # Optional release phase (alpha, beta, rc1, rc2, etc.)
 # Set to None for stable releases
-PHASE = None  # Options: None, "alpha", "beta", "rc1", "rc2", etc.
+PHASE = "alpha"  # Options: None, "alpha", "beta", "rc1", "rc2", etc.
 
 # Full version string - updated by git pre-commit hook
 # DO NOT EDIT THIS LINE MANUALLY
 # Note: Hash reflects the commit this version builds upon (HEAD at commit time)
 # The hash will be one commit behind after the commit is created (git limitation)
-__version__ = "0.5.5_dev_95-20251108-c73650c"
+__version__ = "0.6.0-alpha_dev_96-20251110-72ed396"
 
 
 def get_version():

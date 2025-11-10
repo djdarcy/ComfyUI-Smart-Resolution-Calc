@@ -9,7 +9,7 @@ Flexible resolution and latent generation for [ComfyUI](https://github.com/comfy
 
 ## Overview
 
-Smart Resolution Calculator brings intuitive dimension control to ComfyUI workflows. Instead of manually calculating widths from heights or dimensions from megapixels, simply enable the values you know and let the node compute the rest. Compact rgthree-style widgets keep your workflow clean while providing powerful calculation modes.
+Smart Resolution Calculator brings intuitive dimension control to ComfyUI workflows. Instead of manually calculating widths (W) from heights (H) using a known aspect ratio, or W:H dimensions from megapixels, simply enable the values you know and let the node compute the rest. Compact rgthree-style widgets keep your workflow clean while providing powerful calculation modes.
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
@@ -31,6 +31,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 - **Compact custom widgets** - rgthree-style controls with inline toggles
 - **Values preserved when toggled off** - Change your mind without losing settings
 - **Direct latent output** - No separate Empty Latent Image node needed
+- **VAE encoding support (v0.6+)** - Optional VAE input for img2img workflows; automatically encodes image output to latent
 - **23 preset aspect ratios** - From 1:1 to 32:9, plus custom ratio support
 - **Visual preview** - See exact dimensions and aspect ratio before generation
 - **Divisibility control** - Ensures compatibility with SD/Flux models (8/16/32/64)
@@ -154,7 +155,7 @@ Connect an IMAGE output to automatically extract dimensions or aspect ratio. See
 - `resolution` (STRING) - Formatted string (e.g., "1920 x 1080")
 - `preview` (IMAGE) - Visual grid preview with dimensions and aspect ratio overlay
 - `image` (IMAGE) - Generated or transformed image at calculated dimensions (4 transform modes + empty)
-- `latent` (LATENT) - Ready-to-use latent tensor for sampling
+- `latent` (LATENT) - Ready-to-use latent tensor for sampling (empty latent for txt2img, or VAE-encoded image for img2img if VAE connected)
 - `info` (STRING) - Calculation mode and computed values
 
 **Note**: `preview` is always a visualization grid, while `image` is the actual generated/transformed image output.
