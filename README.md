@@ -9,7 +9,7 @@ Flexible resolution and latent generation for [ComfyUI](https://github.com/comfy
 
 ## Overview
 
-Smart Resolution Calculator brings intuitive dimension control to ComfyUI workflows. Instead of manually calculating widths from heights or dimensions from megapixels, simply enable the values you know and let the node compute the rest. Compact rgthree-style widgets keep your workflow clean while providing powerful calculation modes.
+Smart Resolution Calculator brings intuitive dimension control to ComfyUI workflows. Instead of manually calculating widths (W) from heights (H) using a known aspect ratio, or W:H dimensions from megapixels, simply enable the values you know and let the node compute the rest. Compact rgthree-style widgets keep your workflow clean while providing powerful calculation modes.
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
