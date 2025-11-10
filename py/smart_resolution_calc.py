@@ -618,7 +618,9 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
-                "image": ("IMAGE",),
+                "image": ("IMAGE", {
+                    "tooltip": "Optional input image for dimension extraction and transformation.\n\nWithout VAE:\n• Extract dimensions via 'USE IMAGE DIMS' toggle (AR Only or Exact Dims)\n• Transform to target size (distort, crop/pad, scale/crop, scale/pad)\n• Output available via IMAGE output pin\n\nWith VAE:\n• All above features PLUS\n• IMAGE output is VAE encoded to LATENT output\n• Enables img2img/inpainting/outpainting workflows (use low denoise ~0.2)"
+                }),
                 "vae": ("VAE", {
                     "tooltip": "Optional VAE for encoding image output to latent.\n• Connected: Encodes the IMAGE output to latent (for img2img workflows)\n• Disconnected: Generates empty latent (for txt2img workflows)\nConnect VAE to enable low-denoise img2img/inpainting/outpainting."
                 }),
