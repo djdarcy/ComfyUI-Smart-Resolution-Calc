@@ -618,7 +618,12 @@ class SmartResolutionCalc:
                     "step": 0.1,
                     "display": "slider"
                 }),
-                "image": ("IMAGE",),
+                "image": ("IMAGE", {
+                    "tooltip": "Optional input image for dimension extraction and transformation.\n\nWithout VAE:\n• Extract dimensions via 'USE IMAGE DIMS' toggle (AR Only or Exact Dims)\n• Transform to target size (distort, crop/pad, scale/crop, scale/pad)\n• Output available via IMAGE output pin\n\nWith VAE:\n• All above features PLUS\n• IMAGE output is VAE encoded to LATENT output\n• Enables img2img/inpainting/outpainting workflows (use low denoise ~0.2)"
+                }),
+                "vae": ("VAE", {
+                    "tooltip": "Optional VAE for encoding image output to latent.\n• Connected: Encodes the IMAGE output to latent (for img2img workflows)\n• Disconnected: Generates empty latent (for txt2img workflows)\nConnect VAE to enable low-denoise img2img/inpainting/outpainting."
+                }),
                 # NEW: Image output parameters (hidden by JavaScript until output connected)
                 "output_image_mode": (["auto", "empty", "transform (distort)", "transform (crop/pad)", "transform (scale/crop)", "transform (scale/pad)"], {
                     "default": "auto",
@@ -869,16 +874,33 @@ class SmartResolutionCalc:
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
-                            image=None, output_image_mode="none", fill_type="black",
+                            image=None, vae=None, output_image_mode="none", fill_type="black",
                             fill_color="#808080", **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
+
+        Args:
+            aspect_ratio: Selected aspect ratio from dropdown
+            divisible_by: Dimension rounding factor ("Exact", "8", "16", "32", "64")
+            custom_ratio: Whether custom aspect ratio is enabled
+            custom_aspect_ratio: Custom aspect ratio string (e.g., "16:9")
+            batch_size: Number of images/latents to generate
+            scale: Scale multiplier for dimensions
+            image: Optional input image for dimension extraction or transformation
+            vae: Optional VAE for encoding image output to latent
+                 • If provided: Encodes output_image to latent (img2img workflow)
+                 • If None: Generates empty latent (txt2img workflow)
+            output_image_mode: Image output transformation mode
+            fill_type: Fill pattern for empty images
+            fill_color: Hex color for custom fill
+            **kwargs: Widget data from JavaScript containing dimension toggles
 
         kwargs contains widget data from JavaScript:
         {
             'dimension_megapixel': {'on': True, 'value': 1.0},
             'dimension_width': {'on': False, 'value': 1920},
             'dimension_height': {'on': True, 'value': 1080},
+            'image_mode': {'on': True, 'value': 0},  # 0=AR Only, 1=Exact Dims
         }
 
         Priority order (first match wins):
@@ -887,6 +909,9 @@ class SmartResolutionCalc:
         3. Height + Aspect Ratio → calculate width, then megapixels
         4. Megapixels + Aspect Ratio → calculate both dimensions
         5. None active → default to 1.0 MP + aspect ratio
+
+        Returns:
+            Tuple: (megapixels, width, height, resolution, preview, image, latent, info)
         """
 
         # ALWAYS log that function was called (critical diagnostic)
@@ -1112,6 +1137,13 @@ class SmartResolutionCalc:
                 actual_mode = "empty"
                 logger.debug("Smart default: 'auto' → 'empty' (no input image)")
 
+        # After determining actual_mode from "auto" or possibly mistaken user input
+        # Guard: Transform modes require input image - force to empty if missing
+        if actual_mode.startswith("transform") and image is None:
+            logger.warning(f"Transform mode '{actual_mode}' requires input image, falling back to 'empty' mode")
+            print(f"[SmartResCalc] WARNING: Transform mode requires input image, using empty image instead")
+            actual_mode = "empty"
+
         # Generate actual image output based on mode
         if actual_mode == "empty":
             # Generate image with specified fill pattern at calculated dimensions
@@ -1163,8 +1195,60 @@ class SmartResolutionCalc:
             logger.warning(f"Invalid output_image_mode '{actual_mode}', using empty image")
             output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
 
-        # ===== LATENT OUTPUT (UNCHANGED) =====
-        latent = self.create_latent(w, h, batch_size)
+        # ===== LATENT OUTPUT (NEW: VAE ENCODING SUPPORT) =====
+        # Auto-detection: VAE + image + transform mode → encode image, otherwise → empty latent
+        latent_source = "Empty"  # Default for info output
+
+        if vae is not None and image is not None and actual_mode != "empty":
+            # VAE connected with valid image transform - encode the output_image to latent
+            try:
+                # Debug: Log tensor info for troubleshooting
+                logger.debug(f"VAE connected, preparing to encode output_image")
+                logger.debug(f"  output_image shape: {output_image.shape}")
+                logger.debug(f"  output_image dtype: {output_image.dtype}")
+                logger.debug(f"  output_image device: {output_image.device}")
+                logger.debug(f"  output_image is_contiguous: {output_image.is_contiguous()}")
+
+                # Prepare pixels for VAE encoding
+                # VAE.encode expects: [batch, height, width, channels] in range [0,1]
+                # Take only RGB channels (first 3) to handle RGBA images
+                pixels = output_image
+
+                # Ensure we have the right number of channels
+                if pixels.shape[3] > 3:
+                    # More than 3 channels (e.g., RGBA) - take only RGB
+                    pixels = pixels[:, :, :, :3]
+                    logger.debug(f"  Trimmed to RGB: {pixels.shape}")
+
+                # Ensure tensor is contiguous (required by some VAEs)
+                if not pixels.is_contiguous():
+                    pixels = pixels.contiguous()
+                    logger.debug(f"  Made contiguous")
+
+                # Encode with VAE (matches ComfyUI's VAEEncode node exactly)
+                logger.debug(f"  Calling vae.encode() with shape {pixels.shape}")
+                encoded = vae.encode(pixels)
+
+                # Wrap in latent dict format (ComfyUI standard)
+                latent = {"samples": encoded}
+
+                latent_source = "VAE Encoded"
+                logger.debug(f"VAE encoding successful, latent shape: {latent['samples'].shape}")
+
+            except Exception as e:
+                # Graceful fallback: VAE encoding failed, use empty latent
+                import traceback
+                logger.error(f"VAE encoding failed: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                print(f"[SmartResCalc] WARNING: VAE encoding failed ({e}), using empty latent")
+                latent = self.create_latent(w, h, batch_size)
+                latent_source = "Empty (VAE failed)"
+        else:
+            # Generate empty latent for txt2img workflows (backward compatible)
+            # Reasons: VAE not connected, no input image, or mode is "empty"
+            logger.debug(f"Generating empty latent (txt2img workflow)")
+            latent = self.create_latent(w, h, batch_size)
+            latent_source = "Empty"
 
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
@@ -1179,7 +1263,7 @@ class SmartResolutionCalc:
 
         logger.debug(f"Mode display from calculator: '{mode_display}' (priority={result['priority']}, mode={result['mode']}, conflicts={len(result['conflicts'])})")
 
-        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info}"
+        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info} | Latent: {latent_source}"
 
         # Don't prepend mode_info since AR source is now integrated into mode display
         # (mode_info was just "From Image (AR: X)" which is now part of the mode label)
