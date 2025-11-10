@@ -619,6 +619,9 @@ class SmartResolutionCalc:
                     "display": "slider"
                 }),
                 "image": ("IMAGE",),
+                "vae": ("VAE", {
+                    "tooltip": "Optional VAE for encoding image output to latent.\n• Connected: Encodes the IMAGE output to latent (for img2img workflows)\n• Disconnected: Generates empty latent (for txt2img workflows)\nConnect VAE to enable low-denoise img2img/inpainting/outpainting."
+                }),
                 # NEW: Image output parameters (hidden by JavaScript until output connected)
                 "output_image_mode": (["auto", "empty", "transform (distort)", "transform (crop/pad)", "transform (scale/crop)", "transform (scale/pad)"], {
                     "default": "auto",
@@ -869,16 +872,33 @@ class SmartResolutionCalc:
 
     def calculate_dimensions(self, aspect_ratio, divisible_by, custom_ratio=False,
                             custom_aspect_ratio="16:9", batch_size=1, scale=1.0,
-                            image=None, output_image_mode="none", fill_type="black",
+                            image=None, vae=None, output_image_mode="none", fill_type="black",
                             fill_color="#808080", **kwargs):
         """
         Calculate dimensions based on active toggle inputs from custom widgets.
+
+        Args:
+            aspect_ratio: Selected aspect ratio from dropdown
+            divisible_by: Dimension rounding factor ("Exact", "8", "16", "32", "64")
+            custom_ratio: Whether custom aspect ratio is enabled
+            custom_aspect_ratio: Custom aspect ratio string (e.g., "16:9")
+            batch_size: Number of images/latents to generate
+            scale: Scale multiplier for dimensions
+            image: Optional input image for dimension extraction or transformation
+            vae: Optional VAE for encoding image output to latent
+                 • If provided: Encodes output_image to latent (img2img workflow)
+                 • If None: Generates empty latent (txt2img workflow)
+            output_image_mode: Image output transformation mode
+            fill_type: Fill pattern for empty images
+            fill_color: Hex color for custom fill
+            **kwargs: Widget data from JavaScript containing dimension toggles
 
         kwargs contains widget data from JavaScript:
         {
             'dimension_megapixel': {'on': True, 'value': 1.0},
             'dimension_width': {'on': False, 'value': 1920},
             'dimension_height': {'on': True, 'value': 1080},
+            'image_mode': {'on': True, 'value': 0},  # 0=AR Only, 1=Exact Dims
         }
 
         Priority order (first match wins):
@@ -887,6 +907,9 @@ class SmartResolutionCalc:
         3. Height + Aspect Ratio → calculate width, then megapixels
         4. Megapixels + Aspect Ratio → calculate both dimensions
         5. None active → default to 1.0 MP + aspect ratio
+
+        Returns:
+            Tuple: (megapixels, width, height, resolution, preview, image, latent, info)
         """
 
         # ALWAYS log that function was called (critical diagnostic)
@@ -1163,8 +1186,33 @@ class SmartResolutionCalc:
             logger.warning(f"Invalid output_image_mode '{actual_mode}', using empty image")
             output_image = self.create_empty_image(w, h, fill_type, fill_color, batch_size)
 
-        # ===== LATENT OUTPUT (UNCHANGED) =====
-        latent = self.create_latent(w, h, batch_size)
+        # ===== LATENT OUTPUT (NEW: VAE ENCODING SUPPORT) =====
+        # Auto-detection: VAE connected → encode image, VAE disconnected → empty latent
+        latent_source = "Empty"  # Default for info output
+
+        if vae is not None:
+            # VAE connected - encode the output_image to latent
+            try:
+                logger.debug(f"VAE connected, encoding output_image to latent (shape: {output_image.shape})")
+
+                # VAE.encode expects image in range [0,1] with shape [batch, height, width, channels]
+                # output_image is already in this format from our transform/create methods
+                latent = vae.encode(output_image[:,:,:,:3])  # Encode RGB channels only
+
+                latent_source = "VAE Encoded"
+                logger.debug(f"VAE encoding successful, latent shape: {latent['samples'].shape}")
+
+            except Exception as e:
+                # Graceful fallback: VAE encoding failed, use empty latent
+                logger.error(f"VAE encoding failed: {e}. Falling back to empty latent.")
+                print(f"[SmartResCalc] WARNING: VAE encoding failed ({e}), using empty latent")
+                latent = self.create_latent(w, h, batch_size)
+                latent_source = "Empty (VAE failed)"
+        else:
+            # VAE not connected - generate empty latent (backward compatible)
+            logger.debug(f"VAE not connected, generating empty latent")
+            latent = self.create_latent(w, h, batch_size)
+            latent_source = "Empty"
 
         # Format divisibility info
         div_info = "Exact" if divisible_by == "Exact" else str(divisor)
@@ -1179,7 +1227,7 @@ class SmartResolutionCalc:
 
         logger.debug(f"Mode display from calculator: '{mode_display}' (priority={result['priority']}, mode={result['mode']}, conflicts={len(result['conflicts'])})")
 
-        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info}"
+        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info} | Latent: {latent_source}"
 
         # Don't prepend mode_info since AR source is now integrated into mode display
         # (mode_info was just "From Image (AR: X)" which is now part of the mode label)
