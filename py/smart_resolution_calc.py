@@ -1193,18 +1193,44 @@ class SmartResolutionCalc:
         if vae is not None:
             # VAE connected - encode the output_image to latent
             try:
-                logger.debug(f"VAE connected, encoding output_image to latent (shape: {output_image.shape})")
+                # Debug: Log tensor info for troubleshooting
+                logger.debug(f"VAE connected, preparing to encode output_image")
+                logger.debug(f"  output_image shape: {output_image.shape}")
+                logger.debug(f"  output_image dtype: {output_image.dtype}")
+                logger.debug(f"  output_image device: {output_image.device}")
+                logger.debug(f"  output_image is_contiguous: {output_image.is_contiguous()}")
 
-                # VAE.encode expects image in range [0,1] with shape [batch, height, width, channels]
-                # output_image is already in this format from our transform/create methods
-                latent = vae.encode(output_image[:,:,:,:3])  # Encode RGB channels only
+                # Prepare pixels for VAE encoding
+                # VAE.encode expects: [batch, height, width, channels] in range [0,1]
+                # Take only RGB channels (first 3) to handle RGBA images
+                pixels = output_image
+
+                # Ensure we have the right number of channels
+                if pixels.shape[3] > 3:
+                    # More than 3 channels (e.g., RGBA) - take only RGB
+                    pixels = pixels[:, :, :, :3]
+                    logger.debug(f"  Trimmed to RGB: {pixels.shape}")
+
+                # Ensure tensor is contiguous (required by some VAEs)
+                if not pixels.is_contiguous():
+                    pixels = pixels.contiguous()
+                    logger.debug(f"  Made contiguous")
+
+                # Encode with VAE (matches ComfyUI's VAEEncode node exactly)
+                logger.debug(f"  Calling vae.encode() with shape {pixels.shape}")
+                encoded = vae.encode(pixels)
+
+                # Wrap in latent dict format (ComfyUI standard)
+                latent = {"samples": encoded}
 
                 latent_source = "VAE Encoded"
                 logger.debug(f"VAE encoding successful, latent shape: {latent['samples'].shape}")
 
             except Exception as e:
                 # Graceful fallback: VAE encoding failed, use empty latent
-                logger.error(f"VAE encoding failed: {e}. Falling back to empty latent.")
+                import traceback
+                logger.error(f"VAE encoding failed: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 print(f"[SmartResCalc] WARNING: VAE encoding failed ({e}), using empty latent")
                 latent = self.create_latent(w, h, batch_size)
                 latent_source = "Empty (VAE failed)"
