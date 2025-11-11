@@ -3765,26 +3765,22 @@ app.registerExtension({
                     }
                 });
 
-                // Function to update widget visibility based on image output connection
+                // Function to update widget visibility based on image input connection (v0.6.1)
                 this.updateImageOutputVisibility = function() {
                     visibilityLogger.debug('=== updateImageOutputVisibility called ===');
 
-                    // Ensure outputs array exists and has enough elements
-                    if (!this.outputs || this.outputs.length < 6) {
-                        visibilityLogger.debug('Outputs not ready yet', this.outputs?.length);
-                        return; // Outputs not ready yet
-                    }
+                    // Check if image INPUT has connections (v0.6.1 fix for img2img workflow visibility)
+                    // Changed from checking image OUTPUT to checking image INPUT because:
+                    // - With VAE encoding, INPUT image + VAE -> latent output uses these settings
+                    // - Users need control over output_image_mode/fill_type for img2img/outpainting
+                    const imageInput = this.inputs ? this.inputs.find(inp => inp.name === "image") : null;
+                    visibilityLogger.debug('Image input:', imageInput);
+                    visibilityLogger.debug('Image input link:', imageInput?.link);
 
-                    // Check if image output (position 5) has connections
-                    const imageOutput = this.outputs[5]; // Position 5 = "image" output
-                    visibilityLogger.debug('Image output:', imageOutput);
-                    visibilityLogger.debug('Image output links:', imageOutput?.links);
+                    // Check if input has a connection (single link, not array like outputs)
+                    const hasConnection = imageInput && imageInput.link != null;
 
-                    // Filter out null/undefined links - array might contain nulls after disconnect
-                    const hasConnection = imageOutput && imageOutput.links &&
-                                        imageOutput.links.filter(link => link != null).length > 0;
-
-                    visibilityLogger.debug(`Image output connected: ${hasConnection}`);
+                    visibilityLogger.debug(`Image input connected: ${hasConnection}`);
                     visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
 
                     // Show/hide widgets based on connection status
