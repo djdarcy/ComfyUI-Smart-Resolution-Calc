@@ -3764,12 +3764,19 @@ app.registerExtension({
                         visibilityLogger.debug(`[OrigType] Saved ${key}: origType = "${widget.type}"`);
                         // Store original index in widgets array
                         this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
-                        // Initialize widget value if not already set
-                        if (widget.value === undefined || typeof widget.value === 'object') {
-                            widget.value = this.imageOutputWidgetValues[key];
+
+                        // Skip value initialization for custom widgets - they manage their own state
+                        // Custom widgets have complex value structures and internal state that should not be modified
+                        if (widget.type === "custom") {
+                            visibilityLogger.debug(`[ValueInit] Skipping value init for custom widget ${key} (type="${widget.type}")`);
                         } else {
-                            // Use actual widget value if already initialized
-                            this.imageOutputWidgetValues[key] = widget.value;
+                            // Initialize widget value if not already set (standard widgets only)
+                            if (widget.value === undefined || typeof widget.value === 'object') {
+                                widget.value = this.imageOutputWidgetValues[key];
+                            } else {
+                                // Use actual widget value if already initialized
+                                this.imageOutputWidgetValues[key] = widget.value;
+                            }
                         }
                     }
                 });
@@ -3940,14 +3947,10 @@ app.registerExtension({
                             // 5. Insert image_mode (USE IMAGE DIMS?) toggle
                             const imageModeWidget = this.imageOutputWidgets.image_mode;
                             if (imageModeWidget && this.widgets.indexOf(imageModeWidget) === -1) {
-                                // Restore saved value if exists
-                                const savedValue = this.imageOutputWidgetValues.image_mode;
-                                if (savedValue !== undefined) {
-                                    imageModeWidget.value = savedValue;
-                                }
+                                // Custom widget - don't modify type property or value (must stay "custom" for custom draw/mouse)
+                                // ImageModeWidget manages its own state internally
                                 this.widgets.splice(currentIndex, 0, imageModeWidget);
-                                imageModeWidget.type = imageModeWidget.origType || "toggle";
-                                visibilityLogger.debug(`Inserted image_mode at index ${currentIndex}, value: ${imageModeWidget.value}`);
+                                visibilityLogger.debug(`Inserted image_mode at index ${currentIndex}, type: "${imageModeWidget.type}"`);
                                 currentIndex++; // Move insertion point forward
                             } else if (imageModeWidget) {
                                 const existingIndex = this.widgets.indexOf(imageModeWidget);
