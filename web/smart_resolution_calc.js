@@ -2760,6 +2760,10 @@ class ImageModeWidget {
                     // Asymmetric logic when image disconnected:
                     // - Allow ON → OFF (user turning it off is fine)
                     // - Block OFF → ON (can't enable without image)
+                    //
+                    // DEPRECATED (v0.6.1+): This logic path should now be unreachable because the
+                    // widget is auto-hidden when image input is disconnected. Preserved as defensive
+                    // fallback in case visibility system has edge cases or is disabled in future.
                     if (this.imageDisconnected && newState === true) {
                         logger.debug('Toggle blocked: Cannot enable without image (asymmetric toggle behavior)');
                         return false;
@@ -3122,6 +3126,9 @@ class CopyImageButton {
         ctx.stroke();
 
         // Copy button text
+        // DEPRECATED (v0.6.1+): The (No Image) state text should now be unreachable because
+        // this widget is auto-hidden when image input is disconnected. Preserved as defensive
+        // fallback in case visibility system has edge cases or is disabled in future.
         ctx.fillStyle = hasImage ? "#ffffff" : "#666666";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
@@ -3675,7 +3682,9 @@ app.registerExtension({
                 // to act as a value storage and stable anchor for the color picker button
                 this.imageOutputWidgets = {
                     output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
-                    fill_type: this.widgets.find(w => w.name === "fill_type")
+                    fill_type: this.widgets.find(w => w.name === "fill_type"),
+                    image_mode: this.widgets.find(w => w.name === "image_mode"),
+                    copy_from_image: this.widgets.find(w => w.name === "copy_from_image")
                 };
 
                 // Debug: Log initial widget references to verify correct widgets found
@@ -3782,6 +3791,14 @@ app.registerExtension({
 
                     visibilityLogger.debug(`Image input connected: ${hasConnection}`);
                     visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
+
+                    // Update ImageModeWidget's imageDisconnected property (v0.6.1)
+                    // This property controls the asymmetric toggle behavior
+                    const imageModeWidget = this.imageOutputWidgets.image_mode;
+                    if (imageModeWidget) {
+                        imageModeWidget.imageDisconnected = !hasConnection;
+                        visibilityLogger.debug(`Updated image_mode.imageDisconnected = ${imageModeWidget.imageDisconnected}`);
+                    }
 
                     // Show/hide widgets based on connection status
                     if (hasConnection) {
@@ -3911,8 +3928,43 @@ app.registerExtension({
                                 const restoredType = buttonWidget.origType || "button";
                                 buttonWidget.type = restoredType;
                                 visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}, type: "${restoredType}" (origType: "${buttonWidget.origType}")`);
+                                currentIndex++; // Move insertion point forward
                             } else if (buttonWidget) {
-                                visibilityLogger.debug(`color_picker_button already visible at ${this.widgets.indexOf(buttonWidget)}`);
+                                const existingIndex = this.widgets.indexOf(buttonWidget);
+                                if (existingIndex >= currentIndex) {
+                                    currentIndex = existingIndex + 1;
+                                }
+                                visibilityLogger.debug(`color_picker_button already visible at ${existingIndex}`);
+                            }
+
+                            // 5. Insert image_mode (USE IMAGE DIMS?) toggle
+                            const imageModeWidget = this.imageOutputWidgets.image_mode;
+                            if (imageModeWidget && this.widgets.indexOf(imageModeWidget) === -1) {
+                                // Restore saved value if exists
+                                const savedValue = this.imageOutputWidgetValues.image_mode;
+                                if (savedValue !== undefined) {
+                                    imageModeWidget.value = savedValue;
+                                }
+                                this.widgets.splice(currentIndex, 0, imageModeWidget);
+                                imageModeWidget.type = imageModeWidget.origType || "toggle";
+                                visibilityLogger.debug(`Inserted image_mode at index ${currentIndex}, value: ${imageModeWidget.value}`);
+                                currentIndex++; // Move insertion point forward
+                            } else if (imageModeWidget) {
+                                const existingIndex = this.widgets.indexOf(imageModeWidget);
+                                if (existingIndex >= currentIndex) {
+                                    currentIndex = existingIndex + 1;
+                                }
+                                visibilityLogger.debug(`image_mode already visible at ${existingIndex}`);
+                            }
+
+                            // 6. Insert copy_from_image button
+                            const copyButtonWidget = this.imageOutputWidgets.copy_from_image;
+                            if (copyButtonWidget && this.widgets.indexOf(copyButtonWidget) === -1) {
+                                // Custom widget - don't modify type property (must stay "custom" for mouse/draw events)
+                                this.widgets.splice(currentIndex, 0, copyButtonWidget);
+                                visibilityLogger.debug(`Inserted copy_from_image at index ${currentIndex}, type: "${copyButtonWidget.type}"`);
+                            } else if (copyButtonWidget) {
+                                visibilityLogger.debug(`copy_from_image already visible at ${this.widgets.indexOf(copyButtonWidget)}`);
                             }
                         } else {
                             visibilityLogger.error("Cannot find fill_color for button placement");
