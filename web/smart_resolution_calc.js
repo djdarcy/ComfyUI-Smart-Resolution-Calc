@@ -3973,9 +3973,12 @@ app.registerExtension({
                         originalOnConnectionsChange.apply(this, arguments);
                     }
 
-                    // If image output (position 5) connection changed, update visibility
-                    if (type === LiteGraph.OUTPUT && index === 5) {
-                        this.updateImageOutputVisibility();
+                    // If image INPUT connection changed, update visibility (v0.6.1 fix)
+                    if (type === LiteGraph.INPUT && this.inputs && this.inputs[index]) {
+                        const input = this.inputs[index];
+                        if (input.name === "image") {
+                            this.updateImageOutputVisibility();
+                        }
                     }
                 };
 
@@ -3987,25 +3990,26 @@ app.registerExtension({
                         originalOnConnectionsRemove.apply(this, arguments);
                     }
 
-                    // If image output (position 5) was disconnected, update visibility
-                    if (type === LiteGraph.OUTPUT && index === 5) {
-                        this.updateImageOutputVisibility();
+                    // If image INPUT was disconnected, update visibility (v0.6.1 fix)
+                    if (type === LiteGraph.INPUT && this.inputs && this.inputs[index]) {
+                        const input = this.inputs[index];
+                        if (input.name === "image") {
+                            this.updateImageOutputVisibility();
+                        }
                     }
                 };
 
                 // Periodic check for connection status changes (fallback for when events don't fire)
                 // NOTE: This is necessary because LiteGraph disconnect events don't fire reliably
                 // The 500ms polling is acceptable UX-wise and handles the edge case
+                // v0.6.1: Changed to check INPUT image connection instead of OUTPUT
                 this._lastImageConnectionState = false;
                 this._connectionCheckInterval = setInterval(() => {
-                    if (!this.outputs || this.outputs.length < 6) return;
-
-                    const imageOutput = this.outputs[5];
-                    const currentState = imageOutput && imageOutput.links &&
-                                       imageOutput.links.filter(link => link != null).length > 0;
+                    const imageInput = this.inputs ? this.inputs.find(inp => inp.name === "image") : null;
+                    const currentState = imageInput && imageInput.link != null;
 
                     if (currentState !== this._lastImageConnectionState) {
-                        visibilityLogger.debug(`Image connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
+                        visibilityLogger.debug(`Image INPUT connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
                         this._lastImageConnectionState = currentState;
                         this.updateImageOutputVisibility();
                     }
