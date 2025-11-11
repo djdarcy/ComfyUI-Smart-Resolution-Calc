@@ -3492,6 +3492,111 @@ app.registerExtension({
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
 
+                // Add image source validation method to node (Scenario 2: Invalid Source Detection)
+                // Called by DimensionSourceManager to detect disabled sources through chain traversal
+                this._validateImageSource = function(imageInput, maxDepth = 10) {
+                    if (!imageInput || !imageInput.link) {
+                        return { valid: false, reason: 'no_connection', severity: 'info' };
+                    }
+
+                    let currentInput = imageInput;
+                    let depth = 0;
+                    const visitedNodes = new Set();
+                    const chain = [];  // For debugging/logging
+
+                    while (depth < maxDepth) {
+                        const link = this.graph.links[currentInput.link];
+                        if (!link) {
+                            return {
+                                valid: false,
+                                reason: 'broken_link',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+
+                        const sourceNode = this.graph.getNodeById(link.origin_id);
+                        if (!sourceNode) {
+                            return {
+                                valid: false,
+                                reason: 'missing_node',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+
+                        chain.push(sourceNode.title || sourceNode.type);
+
+                        // Check for circular references
+                        if (visitedNodes.has(sourceNode.id)) {
+                            return {
+                                valid: false,
+                                reason: 'circular_reference',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+                        visitedNodes.add(sourceNode.id);
+
+                        // Check if source is disabled/bypassed
+                        // LiteGraph.NEVER = 2, BYPASS = 4
+                        if (sourceNode.mode === 2 || sourceNode.mode === 4) {
+                            return {
+                                valid: false,
+                                reason: 'disabled_source',
+                                severity: 'warning',
+                                depth,
+                                nodeName: sourceNode.title || sourceNode.type,
+                                chain
+                            };
+                        }
+
+                        // Check if this is a reroute node - follow its input
+                        // Multiple detection methods for different ComfyUI versions
+                        const isReroute = sourceNode.type === 'Reroute' ||
+                                        sourceNode.constructor.name === 'Reroute' ||
+                                        (sourceNode.comfyClass && sourceNode.comfyClass === 'Reroute');
+
+                        if (isReroute) {
+                            const rerouteInput = sourceNode.inputs?.[0];
+                            if (rerouteInput && rerouteInput.link) {
+                                currentInput = rerouteInput;
+                                depth++;
+                                continue;
+                            } else {
+                                // Reroute with no input = broken
+                                return {
+                                    valid: false,
+                                    reason: 'reroute_no_input',
+                                    severity: 'error',
+                                    depth,
+                                    chain
+                                };
+                            }
+                        }
+
+                        // Reached actual source node (not a reroute)
+                        return {
+                            valid: true,
+                            depth,
+                            nodeName: sourceNode.title || sourceNode.type,
+                            chain
+                        };
+                    }
+
+                    // Max depth exceeded
+                    return {
+                        valid: false,
+                        reason: 'max_depth_exceeded',
+                        severity: 'warning',
+                        depth,
+                        chain
+                    };
+                };
+
                 // Initialize DimensionSourceManager for centralized dimension calculation
                 this.dimensionSourceManager = new DimensionSourceManager(this);
                 logger.debug('Initialized DimensionSourceManager');
@@ -3530,7 +3635,8 @@ app.registerExtension({
                 this.setSize(this.computeSize());
 
                 // Helper function to update MODE widget with current dimension source
-                const updateModeWidget = async () => {
+                // @param {boolean} forceRefresh - If true, bypass cache and force recalculation
+                const updateModeWidget = async (forceRefresh = false) => {
                     const modeWidget = this.widgets.find(w => w.name === "mode_status");
                     if (modeWidget && this.dimensionSourceManager) {
                         // Get imageDimensionsCache from stored ScaleWidget reference
@@ -3538,7 +3644,8 @@ app.registerExtension({
 
                         // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
                         // Calls Python API for single source of truth
-                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(false, {
+                        // forceRefresh=true bypasses cache (used when image connection changes)
+                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(forceRefresh, {
                             imageDimensionsCache: imageDimensionsCache
                         });
 
@@ -4006,6 +4113,15 @@ app.registerExtension({
 
                             this.widgets.splice(item.currentIndex, 1);
                         });
+                    }
+
+                    // Trigger Mode(AR) widget update with forced refresh (Scenario 2)
+                    // forceRefresh=true bypasses cache, ensures immediate recalculation
+                    // When image disconnects: Backend state overridden, Mode(AR) shows defaults
+                    // When image connects: Backend state valid, Mode(AR) shows image-based mode
+                    if (this.updateModeWidget) {
+                        this.updateModeWidget(true);  // Force refresh to bypass cache
+                        visibilityLogger.debug('Triggered updateModeWidget(forceRefresh=true) due to image connection change');
                     }
 
                     // Resize node to accommodate shown/hidden widgets
