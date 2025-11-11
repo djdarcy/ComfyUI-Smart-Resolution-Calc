@@ -5,6 +5,134 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2025-11-11
+
+### Fixed
+- **Canvas Corruption** - Critical fix for custom widget hide/show corruption
+  - Root cause: Value initialization code setting custom widget values to undefined
+  - Custom widgets have complex value structures (objects, null) that should not be modified
+  - Fixed by skipping value initialization for widgets with `type === "custom"`
+  - Prevents corruption of ImageModeWidget and CopyImageButton internal state
+- **"USE IMAGE DIMS?" Toggle** - Now works correctly when image connected
+  - Fixed type property modification breaking custom widget rendering
+  - Widget maintains `type = "custom"` required for draw/mouse methods
+- **"Copy from Image" Button** - Fixed broken button after hide/show cycles
+  - Button now appears correctly when image input connected
+  - State preserved across multiple hide/show cycles
+  - Stale workflow state from buggy version requires connection change to refresh
+
+### Changed
+- **Custom Widget Handling** - Value initialization now respects widget boundaries
+  - Skip value initialization entirely for `type === "custom"` widgets
+  - Custom widgets manage their own complex state without interference
+  - Eliminates entire class of state corruption bugs
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Lines 3768-3780: Added `if (widget.type === "custom")` check in value initialization loop
+  - Lines 3947-3961: Removed type property modification for ImageModeWidget insertion
+  - Custom widgets now maintain their type and value properties unchanged
+- **Key Insight**: Custom widgets are complex behaviors with state, not simple data containers
+  - Don't modify widget properties without understanding their purpose
+  - Respect widget boundaries - skip modification for custom widgets
+  - Leave custom widget properties unchanged during hide/show operations
+
+### Benefits
+- ✅ **No Canvas Corruption**: Node loads cleanly without visual artifacts
+- ✅ **Stable Widget Behavior**: All 6 widgets hide/show correctly across multiple cycles
+- ✅ **Custom Widget Functionality**: ImageModeWidget and CopyImageButton work correctly
+- ✅ **Future-Proof**: Pattern established for handling custom widgets safely
+
+### Notes
+- Old workflows saved with buggy code (v0.6.1 WIP) may contain corrupted state
+- Changing image connection refreshes state with fixed code
+- New workflows work correctly from the start
+- Learnings documented in `/private/claude/2025-11-11__10-47-00__canvas-corruption-fix-learnings.md`
+
+### Related Issues
+- Completes Issue #31 - Widget visibility fixes for img2img workflows
+
+## [0.6.1] - 2025-11-11
+
+### Fixed
+- **Widget Visibility for img2img Workflows** - Fixed widget auto-hide checking wrong connection
+  - Changed from checking image OUTPUT to checking image INPUT
+  - With VAE encoding, INPUT image + VAE → latent uses output settings
+  - Users now have control over output_image_mode/fill_type for img2img/outpainting
+  - Handle all connection check locations: main function, onConnectionsChange, onConnectionsRemove, periodic polling
+- **Connection State Detection** - All four locations now check INPUT instead of OUTPUT
+  - `updateImageOutputVisibility()` function (main check)
+  - `onConnectionsChange` handler (connect events)
+  - `onConnectionsRemove` handler (disconnect events)
+  - Periodic polling (500ms fallback for unreliable LiteGraph events)
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Line 3785: Check `imageInput.link` instead of `imageOutput.links`
+  - Lines 3970-3983: Update connection change handler to monitor INPUT
+  - Lines 3987-4000: Update disconnect handler to monitor INPUT
+  - Lines 4007-4016: Update periodic polling to check INPUT connection
+  - All checks now use `const imageInput = this.inputs.find(inp => inp.name === "image")`
+
+### Notes
+- Essential fix for VAE encoding workflows introduced in v0.6.0
+- Widgets (output_image_mode, fill_type, color picker) now appear when needed for img2img
+- Multiple commits to get all connection check locations fixed
+
+### Related Issues
+- Addresses Issue #31 - Widget visibility should check image INPUT not OUTPUT
+
+## [0.6.0] - 2025-11-10
+
+### Added
+- **VAE Encoding Support** - Transform IMAGE output into latent representation for img2img workflows
+  - Optional VAE input for latent encoding (when connected, encodes image to latent)
+  - Auto-detection: VAE connected → encode image; VAE disconnected → empty latent
+  - Supports all VAE types: SD1.5, SDXL, Flux
+  - Graceful error handling with fallback to empty latent
+
+### Changed
+- **Image Input Tooltip** - Enhanced tooltip explaining dual role of image input
+  - Without VAE: dimension extraction and image transformation
+  - With VAE: all above plus VAE encoding to latent for img2img workflows
+  - Clarifies optional nature and full capabilities
+
+### Fixed
+- **VAE Tensor Handling** - Fixed "too many indices for tensor of dimension 4" error
+  - Improved tensor handling to match ComfyUI's VAEEncode pattern exactly
+  - Separated channel slicing from VAE encode call for clarity
+  - Added explicit check for >3 channels (handles RGBA gracefully)
+  - Ensure tensor is contiguous before encoding (required by some VAEs)
+  - Added extensive debug logging (shape, dtype, device, contiguity)
+
+### Technical
+- **Backend Changes** (`py/smart_resolution_calc.py`):
+  - Added optional `vae` parameter to INPUT_TYPES
+  - Modified `calculate_dimensions()` to accept and process VAE
+  - Added VAE encoding logic with error handling and fallback
+  - Updated info output to show latent source ("Empty", "VAE Encoded", or "Empty (VAE failed)")
+- **Latent Output Modes**:
+  1. Empty Latent (VAE disconnected) - txt2img workflows
+  2. VAE Encoded Latent (VAE connected) - img2img/inpainting/outpainting workflows
+- **Error Handling**:
+  - Graceful fallback: VAE encoding failure → empty latent
+  - Errors logged to console and debug log
+  - No workflow interruption on encoding failure
+- **Debug Logging**: Enable with `COMFY_DEBUG_SMART_RES_CALC=true`
+
+### Breaking Changes
+None - Fully backward compatible with v0.5.x workflows
+
+### Benefits
+- ✅ **img2img Support** - Use calculated dimensions for img2img workflows
+- ✅ **Flexible Workflow** - Same node works for txt2img and img2img
+- ✅ **Robust Error Handling** - Encoding failures don't break workflows
+- ✅ **Universal VAE Support** - Works with all ComfyUI-supported VAE types
+
+### Notes
+- VAE input is optional - node works exactly as before without it
+- Commit history shows 4 commits from "Claude <noreply@anthropic.com>" (legitimate v0.6.0 work, already released)
+
 ## [0.5.4] - 2025-11-07
 
 ### Changed

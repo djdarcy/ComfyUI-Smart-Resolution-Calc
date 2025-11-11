@@ -2760,6 +2760,10 @@ class ImageModeWidget {
                     // Asymmetric logic when image disconnected:
                     // - Allow ON → OFF (user turning it off is fine)
                     // - Block OFF → ON (can't enable without image)
+                    //
+                    // DEPRECATED (v0.6.1+): This logic path should now be unreachable because the
+                    // widget is auto-hidden when image input is disconnected. Preserved as defensive
+                    // fallback in case visibility system has edge cases or is disabled in future.
                     if (this.imageDisconnected && newState === true) {
                         logger.debug('Toggle blocked: Cannot enable without image (asymmetric toggle behavior)');
                         return false;
@@ -3122,6 +3126,9 @@ class CopyImageButton {
         ctx.stroke();
 
         // Copy button text
+        // DEPRECATED (v0.6.1+): The (No Image) state text should now be unreachable because
+        // this widget is auto-hidden when image input is disconnected. Preserved as defensive
+        // fallback in case visibility system has edge cases or is disabled in future.
         ctx.fillStyle = hasImage ? "#ffffff" : "#666666";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
@@ -3675,7 +3682,9 @@ app.registerExtension({
                 // to act as a value storage and stable anchor for the color picker button
                 this.imageOutputWidgets = {
                     output_image_mode: this.widgets.find(w => w.name === "output_image_mode"),
-                    fill_type: this.widgets.find(w => w.name === "fill_type")
+                    fill_type: this.widgets.find(w => w.name === "fill_type"),
+                    image_mode: this.widgets.find(w => w.name === "image_mode"),
+                    copy_from_image: this.widgets.find(w => w.name === "copy_from_image")
                 };
 
                 // Debug: Log initial widget references to verify correct widgets found
@@ -3755,37 +3764,48 @@ app.registerExtension({
                         visibilityLogger.debug(`[OrigType] Saved ${key}: origType = "${widget.type}"`);
                         // Store original index in widgets array
                         this.imageOutputWidgetIndices[key] = this.widgets.indexOf(widget);
-                        // Initialize widget value if not already set
-                        if (widget.value === undefined || typeof widget.value === 'object') {
-                            widget.value = this.imageOutputWidgetValues[key];
+
+                        // Skip value initialization for custom widgets - they manage their own state
+                        // Custom widgets have complex value structures and internal state that should not be modified
+                        if (widget.type === "custom") {
+                            visibilityLogger.debug(`[ValueInit] Skipping value init for custom widget ${key} (type="${widget.type}")`);
                         } else {
-                            // Use actual widget value if already initialized
-                            this.imageOutputWidgetValues[key] = widget.value;
+                            // Initialize widget value if not already set (standard widgets only)
+                            if (widget.value === undefined || typeof widget.value === 'object') {
+                                widget.value = this.imageOutputWidgetValues[key];
+                            } else {
+                                // Use actual widget value if already initialized
+                                this.imageOutputWidgetValues[key] = widget.value;
+                            }
                         }
                     }
                 });
 
-                // Function to update widget visibility based on image output connection
+                // Function to update widget visibility based on image input connection (v0.6.1)
                 this.updateImageOutputVisibility = function() {
                     visibilityLogger.debug('=== updateImageOutputVisibility called ===');
 
-                    // Ensure outputs array exists and has enough elements
-                    if (!this.outputs || this.outputs.length < 6) {
-                        visibilityLogger.debug('Outputs not ready yet', this.outputs?.length);
-                        return; // Outputs not ready yet
-                    }
+                    // Check if image INPUT has connections (v0.6.1 fix for img2img workflow visibility)
+                    // Changed from checking image OUTPUT to checking image INPUT because:
+                    // - With VAE encoding, INPUT image + VAE -> latent output uses these settings
+                    // - Users need control over output_image_mode/fill_type for img2img/outpainting
+                    const imageInput = this.inputs ? this.inputs.find(inp => inp.name === "image") : null;
+                    visibilityLogger.debug('Image input:', imageInput);
+                    visibilityLogger.debug('Image input link:', imageInput?.link);
 
-                    // Check if image output (position 5) has connections
-                    const imageOutput = this.outputs[5]; // Position 5 = "image" output
-                    visibilityLogger.debug('Image output:', imageOutput);
-                    visibilityLogger.debug('Image output links:', imageOutput?.links);
+                    // Check if input has a connection (single link, not array like outputs)
+                    const hasConnection = imageInput && imageInput.link != null;
 
-                    // Filter out null/undefined links - array might contain nulls after disconnect
-                    const hasConnection = imageOutput && imageOutput.links &&
-                                        imageOutput.links.filter(link => link != null).length > 0;
-
-                    visibilityLogger.debug(`Image output connected: ${hasConnection}`);
+                    visibilityLogger.debug(`Image input connected: ${hasConnection}`);
                     visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
+
+                    // Update ImageModeWidget's imageDisconnected property (v0.6.1)
+                    // This property controls the asymmetric toggle behavior
+                    const imageModeWidget = this.imageOutputWidgets.image_mode;
+                    if (imageModeWidget) {
+                        imageModeWidget.imageDisconnected = !hasConnection;
+                        visibilityLogger.debug(`Updated image_mode.imageDisconnected = ${imageModeWidget.imageDisconnected}`);
+                    }
 
                     // Show/hide widgets based on connection status
                     if (hasConnection) {
@@ -3915,8 +3935,39 @@ app.registerExtension({
                                 const restoredType = buttonWidget.origType || "button";
                                 buttonWidget.type = restoredType;
                                 visibilityLogger.debug(`Inserted color_picker_button at index ${currentIndex}, type: "${restoredType}" (origType: "${buttonWidget.origType}")`);
+                                currentIndex++; // Move insertion point forward
                             } else if (buttonWidget) {
-                                visibilityLogger.debug(`color_picker_button already visible at ${this.widgets.indexOf(buttonWidget)}`);
+                                const existingIndex = this.widgets.indexOf(buttonWidget);
+                                if (existingIndex >= currentIndex) {
+                                    currentIndex = existingIndex + 1;
+                                }
+                                visibilityLogger.debug(`color_picker_button already visible at ${existingIndex}`);
+                            }
+
+                            // 5. Insert image_mode (USE IMAGE DIMS?) toggle
+                            const imageModeWidget = this.imageOutputWidgets.image_mode;
+                            if (imageModeWidget && this.widgets.indexOf(imageModeWidget) === -1) {
+                                // Custom widget - don't modify type property or value (must stay "custom" for custom draw/mouse)
+                                // ImageModeWidget manages its own state internally
+                                this.widgets.splice(currentIndex, 0, imageModeWidget);
+                                visibilityLogger.debug(`Inserted image_mode at index ${currentIndex}, type: "${imageModeWidget.type}"`);
+                                currentIndex++; // Move insertion point forward
+                            } else if (imageModeWidget) {
+                                const existingIndex = this.widgets.indexOf(imageModeWidget);
+                                if (existingIndex >= currentIndex) {
+                                    currentIndex = existingIndex + 1;
+                                }
+                                visibilityLogger.debug(`image_mode already visible at ${existingIndex}`);
+                            }
+
+                            // 6. Insert copy_from_image button
+                            const copyButtonWidget = this.imageOutputWidgets.copy_from_image;
+                            if (copyButtonWidget && this.widgets.indexOf(copyButtonWidget) === -1) {
+                                // Custom widget - don't modify type property (must stay "custom" for mouse/draw events)
+                                this.widgets.splice(currentIndex, 0, copyButtonWidget);
+                                visibilityLogger.debug(`Inserted copy_from_image at index ${currentIndex}, type: "${copyButtonWidget.type}"`);
+                            } else if (copyButtonWidget) {
+                                visibilityLogger.debug(`copy_from_image already visible at ${this.widgets.indexOf(copyButtonWidget)}`);
                             }
                         } else {
                             visibilityLogger.error("Cannot find fill_color for button placement");
@@ -3977,9 +4028,12 @@ app.registerExtension({
                         originalOnConnectionsChange.apply(this, arguments);
                     }
 
-                    // If image output (position 5) connection changed, update visibility
-                    if (type === LiteGraph.OUTPUT && index === 5) {
-                        this.updateImageOutputVisibility();
+                    // If image INPUT connection changed, update visibility (v0.6.1 fix)
+                    if (type === LiteGraph.INPUT && this.inputs && this.inputs[index]) {
+                        const input = this.inputs[index];
+                        if (input.name === "image") {
+                            this.updateImageOutputVisibility();
+                        }
                     }
                 };
 
@@ -3991,25 +4045,26 @@ app.registerExtension({
                         originalOnConnectionsRemove.apply(this, arguments);
                     }
 
-                    // If image output (position 5) was disconnected, update visibility
-                    if (type === LiteGraph.OUTPUT && index === 5) {
-                        this.updateImageOutputVisibility();
+                    // If image INPUT was disconnected, update visibility (v0.6.1 fix)
+                    if (type === LiteGraph.INPUT && this.inputs && this.inputs[index]) {
+                        const input = this.inputs[index];
+                        if (input.name === "image") {
+                            this.updateImageOutputVisibility();
+                        }
                     }
                 };
 
                 // Periodic check for connection status changes (fallback for when events don't fire)
                 // NOTE: This is necessary because LiteGraph disconnect events don't fire reliably
                 // The 500ms polling is acceptable UX-wise and handles the edge case
+                // v0.6.1: Changed to check INPUT image connection instead of OUTPUT
                 this._lastImageConnectionState = false;
                 this._connectionCheckInterval = setInterval(() => {
-                    if (!this.outputs || this.outputs.length < 6) return;
-
-                    const imageOutput = this.outputs[5];
-                    const currentState = imageOutput && imageOutput.links &&
-                                       imageOutput.links.filter(link => link != null).length > 0;
+                    const imageInput = this.inputs ? this.inputs.find(inp => inp.name === "image") : null;
+                    const currentState = imageInput && imageInput.link != null;
 
                     if (currentState !== this._lastImageConnectionState) {
-                        visibilityLogger.debug(`Image connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
+                        visibilityLogger.debug(`Image INPUT connection state changed: ${this._lastImageConnectionState} → ${currentState}`);
                         this._lastImageConnectionState = currentState;
                         this.updateImageOutputVisibility();
                     }
