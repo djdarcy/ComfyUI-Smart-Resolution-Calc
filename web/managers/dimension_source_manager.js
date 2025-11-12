@@ -39,11 +39,21 @@ export class DimensionSourceManager {
     async getActiveDimensionSource(forceRefresh = false, runtimeContext = {}) {
         const now = Date.now();
 
+        // DIAGNOSTIC: Log cache check (Phase 1 - Reconnect issue diagnosis)
+        logger.debug('[CACHE] getActiveDimensionSource called');
+        logger.debug('[CACHE] forceRefresh:', forceRefresh);
+        logger.debug('[CACHE] cache.dimensionSource exists:', !!this.cache.dimensionSource);
+        logger.debug('[CACHE] cache age:', now - this.cache.timestamp, 'ms');
+        logger.debug('[CACHE] cache.ttl:', this.cache.ttl, 'ms');
+
         // Return cached result if valid
         if (!forceRefresh && this.cache.dimensionSource &&
             (now - this.cache.timestamp < this.cache.ttl)) {
+            logger.debug('[CACHE] Returning cached result');
             return this.cache.dimensionSource;
         }
+
+        logger.debug('[CACHE] Cache bypassed, calling Python API');
 
         // Calculate fresh result with runtime context (calls Python API)
         const result = await this._calculateDimensionSource(runtimeContext);
@@ -51,6 +61,8 @@ export class DimensionSourceManager {
         // Update cache
         this.cache.dimensionSource = result;
         this.cache.timestamp = now;
+
+        logger.debug('[CACHE] New result cached, mode:', result?.dimSource?.mode);
 
         return result;
     }
@@ -60,6 +72,28 @@ export class DimensionSourceManager {
      *
      * Python handles all dimension calculations using DimensionSourceCalculator class.
      * This eliminates code duplication and prevents JS/Python drift (v0.4.11 bug).
+     *
+     * UI vs Backend State Management:
+     * --------------------------------
+     * UI STATE (JavaScript widgets):
+     *   - imageMode.value.on: Toggle visible in UI (persists when image disconnects)
+     *   - imageMode.value.value: Mode selector (0=AR Only, 1=Exact Dims)
+     *   - imageMode.imageDisconnected: Connection tracking (true = no image)
+     *
+     * BACKEND STATE (sent to Python):
+     *   - image_mode_enabled: Whether Python should use image-based calculations
+     *   - image_mode_value: Which image mode to use (0=AR Only, 1=Exact Dims)
+     *
+     * CRITICAL: UI and Backend states can differ!
+     *   - UX Benefit: Toggle stays ON when image disconnects (easy reconnection)
+     *   - Backend Override: image_mode_enabled forced to false when no valid image
+     *   - All logic decisions MUST use backend state (what Python receives)
+     *
+     * Validation Override Scenarios (Scenario 2):
+     *   - no_connection: No image input connected → override to false
+     *   - disabled_source: Source node disabled → override to false
+     *   - broken_link: Connection broken → override to false
+     *   - Other errors: Treat as invalid source → override to false
      *
      * @param {Object} runtimeContext - Runtime data including imageDimensionsCache
      * @returns {Promise<Object>} Dimension source result
@@ -82,19 +116,19 @@ export class DimensionSourceManager {
             height_value: widgets.height?.value?.value || 1024,
             mp_enabled: widgets.mp?.value?.on || false,
             mp_value: widgets.mp?.value?.value || 1.0,
-            image_mode_enabled: widgets.imageMode?.value?.on || false,
+            image_mode_enabled: widgets.imageMode?.value?.on || false,  // UI state (may be overridden)
             image_mode_value: widgets.imageMode?.value?.value || 0,
             custom_ratio_enabled: widgets.customRatioToggle?.value || false,  // Direct boolean, not .on
             custom_aspect_ratio: widgets.customRatioText?.value || '5.2:2.5',
             aspect_ratio_dropdown: widgets.aspectRatio?.value || '16:9'
         };
 
-        logger.debug('[Manager] Widget state being sent to Python:', {
-            custom_ratio_enabled: widgetState.custom_ratio_enabled,
-            custom_aspect_ratio: widgetState.custom_aspect_ratio,
-            customRatioToggle_value: widgets.customRatioToggle?.value,
-            customRatioText_value: widgets.customRatioText?.value
-        });
+        // DIAGNOSTIC: Log complete widget state including image_mode (Phase 1)
+        logger.debug('[Manager] widgets.imageMode:', widgets.imageMode);
+        logger.debug('[Manager] widgets.imageMode?.value:', widgets.imageMode?.value);
+        logger.debug('[Manager] widgetState.image_mode_enabled:', widgetState.image_mode_enabled);
+        logger.debug('[Manager] widgetState.image_mode_value:', widgetState.image_mode_value);
+        logger.debug('[Manager] Full widgetState being sent to Python:', widgetState);
 
         // Build runtime context for Python API
         const apiContext = {};
@@ -103,6 +137,27 @@ export class DimensionSourceManager {
                 width: imageDimensionsCache.width,
                 height: imageDimensionsCache.height
             };
+        }
+
+        // Validate image source before API call (Scenario 2: Invalid Source Detection)
+        const imageInput = this.node.inputs?.find(inp => inp.name === "image");
+        const sourceValidation = this.node._validateImageSource(imageInput);
+
+        logger.debug('[Manager] Image source validation:', sourceValidation);
+
+        // CRITICAL: Override backend state if image source invalid (UI/Backend state disconnect)
+        // UI toggle may be ON (for easy reconnection), but Python should ignore it
+        if (!sourceValidation.valid) {
+            const uiState = widgetState.image_mode_enabled;
+            widgetState.image_mode_enabled = false;  // Force Python to ignore image mode
+            logger.debug(`[Manager] Image source invalid (${sourceValidation.reason}) - overriding backend state:`);
+            logger.debug(`  UI state: image_mode_enabled=${uiState} (toggle visible to user)`);
+            logger.debug(`  Backend state: image_mode_enabled=false (sent to Python)`);
+            logger.debug(`  UX: Toggle stays ON for easy reconnection, but calculations use defaults`);
+        } else {
+            // DIAGNOSTIC: Log when validation passes (Phase 1)
+            logger.debug(`[Manager] Image source VALID - NOT overriding backend state`);
+            logger.debug(`  Backend state: image_mode_enabled=${widgetState.image_mode_enabled}, image_mode_value=${widgetState.image_mode_value}`);
         }
 
         try {
@@ -129,6 +184,18 @@ export class DimensionSourceManager {
             }
 
             logger.debug('[Manager] Python API success:', result);
+
+            // Add source validation as separate property (NOT part of calculation conflicts)
+            // Source validation and calculation conflicts are separate concerns
+            // IMPORTANT: Always explicitly set sourceWarning (either object or null) to prevent stale values
+            if (!sourceValidation.valid && result) {
+                result.sourceWarning = this._createSourceWarning(sourceValidation);
+                logger.debug('[Manager] Added source validation warning:', result.sourceWarning);
+            } else {
+                result.sourceWarning = null;
+                logger.debug('[Manager] No source warning - image source is valid');
+            }
+
             return result;
 
         } catch (error) {
@@ -166,6 +233,33 @@ export class DimensionSourceManager {
             customRatioToggle: this.node.widgets.find(w => w.name === "custom_ratio"),
             customRatioText: this.node.widgets.find(w => w.name === "custom_aspect_ratio"),
             aspectRatio: this.node.widgets.find(w => w.name === "aspect_ratio")
+        };
+    }
+
+    /**
+     * Create source warning object for invalid image source (Scenario 2)
+     * Separate from calculation conflicts - indicates source connectivity issues.
+     *
+     * @param {Object} validation - Validation result from _validateImageSource()
+     * @returns {Object} Source warning object
+     */
+    _createSourceWarning(validation) {
+        const messages = {
+            'no_connection': 'No image connected',
+            'broken_link': 'Image connection is broken',
+            'missing_node': 'Source node not found',
+            'circular_reference': 'Circular reference in image connections',
+            'disabled_source': `Image source "${validation.nodeName}" is disabled`,
+            'reroute_no_input': 'Reroute node has no input',
+            'max_depth_exceeded': 'Image connection chain too deep (possible circular reference)'
+        };
+
+        return {
+            reason: validation.reason,
+            severity: validation.severity,
+            message: messages[validation.reason] || `Invalid image source: ${validation.reason}`,
+            icon: '🔌',  // Disconnected plug icon
+            validation: validation  // Include full details for debugging
         };
     }
 

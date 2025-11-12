@@ -105,6 +105,11 @@ try:
             widgets = data.get('widgets')
             runtime_context = data.get('runtime_context', {})
 
+            # Diagnostic logging available by uncommenting below (useful for debugging timing issues)
+            # print("[API-ENDPOINT] /smart-resolution/calculate-dimensions called")
+            # print(f"[API-ENDPOINT] image_mode_enabled: {widgets.get('image_mode_enabled') if widgets else None}")
+            # print(f"[API-ENDPOINT] image_info present: {bool(runtime_context.get('image_info'))}")
+
             if not widgets:
                 return web.json_response({
                     'success': False,

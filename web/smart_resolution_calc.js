@@ -684,6 +684,7 @@ class InfoIcon {
     }
 
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -738,20 +739,51 @@ const ImageDimensionUtils = {
      * Extract file path from LoadImage node
      * Returns null if not a LoadImage node or path not found
      */
-    getImageFilePath(sourceNode) {
+    getImageFilePath(sourceNode, maxDepth = 10) {
         if (!sourceNode) return null;
 
-        // Check if this is a LoadImage node
-        if (sourceNode.type === "LoadImage" || sourceNode.title?.includes("Load Image")) {
-            // Try to get the image filename from the widget
-            const imageWidget = sourceNode.widgets?.find(w => w.name === "image");
+        // Generic traversal: Follow input connections until we find a node with image data
+        // This works with ANY node type (LoadImage, custom loaders, reroutes, etc.)
+        let currentNode = sourceNode;
+        let depth = 0;
+        const visitedNodes = new Set();
+
+        while (depth < maxDepth) {
+            // Prevent circular references
+            if (visitedNodes.has(currentNode.id)) {
+                logger.verbose('[ImageUtils] Circular reference detected in connection chain');
+                return null;
+            }
+            visitedNodes.add(currentNode.id);
+
+            // Check if this node has an image widget with a filename
+            // This works for LoadImage and any other node that loads images from files
+            const imageWidget = currentNode.widgets?.find(w => w.name === "image");
             if (imageWidget && imageWidget.value) {
-                logger.verbose(`Found LoadImage with filename: ${imageWidget.value}`);
+                logger.verbose(`[ImageUtils] Found image source at node '${currentNode.title || currentNode.type}' with filename: ${imageWidget.value}`);
                 return imageWidget.value;
             }
+
+            // This node doesn't have the data we need - check if it has an input to traverse
+            // This handles reroutes, custom passthrough nodes, etc.
+            const firstInput = currentNode.inputs?.[0];
+            if (firstInput && firstInput.link) {
+                const linkInfo = currentNode.graph.links[firstInput.link];
+                const upstreamNode = linkInfo ? currentNode.graph.getNodeById(linkInfo.origin_id) : null;
+                if (upstreamNode) {
+                    logger.verbose(`[ImageUtils] Node '${currentNode.title || currentNode.type}' has no image data, traversing to input (depth ${depth})`);
+                    currentNode = upstreamNode;
+                    depth++;
+                    continue;
+                }
+            }
+
+            // No image data and no input to traverse
+            logger.verbose(`[ImageUtils] Node '${currentNode.title || currentNode.type}' has no image data and no input connection`);
+            return null;
         }
 
-        logger.verbose(`Source node type: ${sourceNode.type} - not a LoadImage node`);
+        logger.verbose(`[ImageUtils] Max depth (${maxDepth}) exceeded in connection chain`);
         return null;
     },
 
@@ -937,6 +969,34 @@ class ScaleWidget {
 
         const baseW = dimSource.baseW;
         const baseH = dimSource.baseH;
+
+        // Check for pending state (null dimensions from generator nodes)
+        // When pending, return null values for all calculated fields
+        if (baseW === null || baseH === null) {
+            // Get divisor for return object (still needed for tooltip display)
+            const divisibleWidget = node.widgets.find(w => w.name === "divisible_by");
+            const divisor = divisibleWidget?.value === "Exact" ? 1 : parseInt(divisibleWidget?.value || 16);
+
+            return {
+                baseW: null,
+                baseH: null,
+                baseMp: null,
+                scaledW: null,
+                scaledH: null,
+                finalW: null,
+                finalH: null,
+                finalMp: null,
+                divisor: divisor,
+                aspectW: dimSource.ar.aspectW,  // Will be null for pending
+                aspectH: dimSource.ar.aspectH,  // Will be null for pending
+                mode: dimSource.mode,
+                priority: dimSource.priority,
+                description: dimSource.description,
+                conflicts: dimSource.conflicts
+            };
+        }
+
+        // Normal calculation path (dimensions available)
         const baseMp = (baseW * baseH) / 1_000_000;
 
         // Apply scale
@@ -993,55 +1053,51 @@ class ScaleWidget {
         const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
         dimensionLogger.verbose('[REFRESH] imageModeWidget:', imageModeWidget);
         dimensionLogger.verbose('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
+
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
-            logger.verbose('USE_IMAGE disabled, clearing dimension cache');
+            dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
+            // Still update Mode(AR) to clear any stale source warnings (image may have reconnected)
+            await node.updateModeWidget(true);
             return;
         }
 
         // Get connected image node
         const imageInput = node.inputs?.find(inp => inp.name === "image");
         const link = imageInput?.link;
-        dimensionLogger.verbose('[REFRESH] imageInput:', imageInput);
-        dimensionLogger.verbose('[REFRESH] link:', link);
+
         if (!link) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
-            logger.verbose('No image connected, clearing dimension cache');
+            dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
             return;
         }
 
         // Get source node from link
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
-        dimensionLogger.verbose('[REFRESH] sourceNode:', sourceNode);
+
         if (!sourceNode) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
-            logger.verbose('Source node not found, clearing dimension cache');
+            dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
             return;
         }
 
         // Check cache validity (same image path)
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
-        dimensionLogger.debug('[REFRESH] filePath:', filePath);
-        dimensionLogger.verbose('[REFRESH] Current cache:', this.imageDimensionsCache);
+
         if (this.imageDimensionsCache?.path === filePath && filePath) {
-            // dimensionLogger.debug('[REFRESH] Using cached dimensions for:', filePath);
-            logger.verbose(`Using cached dimensions for ${filePath}`);
+            dimensionLogger.debug(`[REFRESH] Using cached dimensions for ${filePath}`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
-            // dimensionLogger.debug('[REFRESH] Already fetching, skipping');
-            logger.verbose('Already fetching dimensions, skipping');
+            dimensionLogger.debug('[REFRESH] Already fetching, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
-        dimensionLogger.debug('[REFRESH] Starting hybrid fetch strategy');
+        dimensionLogger.debug('[REFRESH] Starting dimension fetch');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
@@ -1063,7 +1119,9 @@ class ScaleWidget {
 
                     // Invalidate dimension source cache when image dimensions change
                     node.dimensionSourceManager?.invalidateCache();
-                    node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+                    // Update MODE widget after dimensions loaded (forceRefresh=true to bypass cache)
+                    // This ensures runtime_context.image_info is populated when Python calculates
+                    node.updateModeWidget?.(true);
 
                     node.setDirtyCanvas(true, true);
                     return;
@@ -1092,7 +1150,9 @@ class ScaleWidget {
 
                 // Invalidate dimension source cache when image dimensions change
                 node.dimensionSourceManager?.invalidateCache();
-                node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+                // Update MODE widget after dimensions loaded (forceRefresh=true to bypass cache)
+                // This ensures runtime_context.image_info is populated when Python calculates
+                node.updateModeWidget?.(true);
 
                 node.setDirtyCanvas(true, true);
                 return;
@@ -1104,6 +1164,13 @@ class ScaleWidget {
             // dimensionLogger.debug('[REFRESH] Tier 3: No dimensions available, clearing cache');
             logger.verbose('No dimensions available from any source, clearing cache');
             this.imageDimensionsCache = null;
+
+            // Update MODE widget to show pending state (for generator nodes like KSampler)
+            // When USE_IMAGE is enabled but no dimensions available yet, Python returns pending modes
+            // This triggers display of "IMG Exact Dims (?:?)" or "WIDTH & IMG AR Only (?:?)"
+            // See: Scenario 1 implementation - pending data display
+            node.updateModeWidget?.(true);
+            logger.debug('Called updateModeWidget for pending state (no dimensions available)');
 
         } finally {
             this.fetchingDimensions = false;
@@ -1316,6 +1383,12 @@ class ScaleWidget {
      * Get AR ratio string - prefers exact AR from Python API over calculated
      */
     _getARRatio(dimSource) {
+        // Check for pending state (explicit null values from Python)
+        // Pending states have ar.source === 'image_pending' with null aspectW/aspectH
+        if (dimSource.ar && dimSource.ar.source === 'image_pending') {
+            return '?:?';  // User wants image AR but data not yet available
+        }
+
         // Prefer exact AR from Python API (avoids rounding errors)
         if (dimSource.ar && dimSource.ar.aspectW && dimSource.ar.aspectH) {
             return `${dimSource.ar.aspectW}:${dimSource.ar.aspectH}`;
@@ -1333,14 +1406,14 @@ class ScaleWidget {
         const { mode, description, activeSources, baseW, baseH } = dimSource;
 
         // Check for special modes first
-        if (description.includes('Exact Dims') || description.includes('exact image')) {
-            // Add AR ratio for exact dims too
+        if (mode === 'exact_dims' || mode === 'exact_dims_pending' || description.includes('Exact Dims') || description.includes('exact image')) {
+            // Add AR ratio for exact dims (will be "?:?" for pending states)
             const ratio = this._getARRatio(dimSource);
             return ratio ? `IMG Exact Dims (${ratio})` : 'IMG Exact Dims';
         }
 
-        // Check for AR Only mode (Priority 4)
-        if (mode === 'ar_only') {
+        // Check for AR Only mode (Priority 4) - includes pending state
+        if (mode === 'ar_only' || mode === 'ar_only_pending') {
             // Extract dimension source from description
             const dimensionSource = description.split(' & ')[0]; // "HEIGHT", "WIDTH", "MEGAPIXEL", or "defaults"
             const ratio = this._getARRatio(dimSource);
@@ -1431,10 +1504,16 @@ class ScaleWidget {
 
         ctx.save();
 
+        // Format values for display, handling pending states (null values)
+        const formatDim = (value) => (value === null || value === undefined) ? '?' : value;
+        const formatMp = (value) => (value === null || value === undefined) ? '?' : value.toFixed(2);
+
         // Format aspect ratio for display
-        const arDisplay = preview.aspectW && preview.aspectH
-            ? `${preview.aspectW}:${preview.aspectH}`
-            : 'unknown';
+        const arDisplay = (preview.aspectW === null || preview.aspectH === null)
+            ? '?:?'  // Pending state - awaiting image data
+            : (preview.aspectW && preview.aspectH)
+                ? `${preview.aspectW}:${preview.aspectH}`
+                : 'unknown';
 
         // Build tooltip content
         const lines = [
@@ -1444,11 +1523,11 @@ class ScaleWidget {
 
         // Note: Mode line removed - now shown in dedicated mode_status widget above aspect_ratio
 
-        // Add dimension calculations
-        lines.push(`Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`);
+        // Add dimension calculations (handle pending states with ?)
+        lines.push(`Base: ${formatDim(preview.baseW)} × ${formatDim(preview.baseH)} (${formatMp(preview.baseMp)} MP, ${arDisplay} AR)`);
         lines.push(`  ↓`);
-        lines.push(`Scaled: ${preview.scaledW} × ${preview.scaledH}`);
-        lines.push(`After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`);
+        lines.push(`Scaled: ${formatDim(preview.scaledW)} × ${formatDim(preview.scaledH)}`);
+        lines.push(`After Div/${preview.divisor}: ${formatDim(preview.finalW)} × ${formatDim(preview.finalH)} (${formatMp(preview.finalMp)} MP)`);
 
         // Measure text width BEFORE adding conflicts to determine max tooltip width
         ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)
@@ -1796,17 +1875,10 @@ class ScaleWidget {
         }
 
         if (event.type === "pointermove") {
-            // Clear any existing safety timeout
-            if (this.tooltipTimeout) {
-                clearTimeout(this.tooltipTimeout);
-                this.tooltipTimeout = null;
-            }
-
             // Update hover state based on mouse position
+            // Only show tooltip when hovering over the handle (green knob), not the entire slider track
             const wasHovering = this.isHovering;
-            this.isHovering = this.isInBounds(pos, this.hitAreas.slider) ||
-                             this.isInBounds(pos, this.hitAreas.handle) ||
-                             this.isInBounds(pos, this.hitAreas.valueEdit);
+            this.isHovering = this.isInBounds(pos, this.hitAreas.handle);
 
             // Handle dragging
             if (this.isDragging && this.mouseDowned) {
@@ -1815,33 +1887,42 @@ class ScaleWidget {
                 return true;
             }
 
-            // Redraw if hover state changed
+            // Handle hover state changes
             if (wasHovering !== this.isHovering) {
-                node.setDirtyCanvas(true);
-            }
+                // Clear any existing timeout when hover state changes
+                if (this.tooltipTimeout) {
+                    clearTimeout(this.tooltipTimeout);
+                    this.tooltipTimeout = null;
+                }
 
-            // Safety timeout: hide tooltip after 2 seconds of no mouse movement
-            // This handles cases where pointerleave doesn't fire (e.g., switching windows)
-            if (this.isHovering) {
-                this.tooltipTimeout = setTimeout(() => {
-                    this.isHovering = false;
-                    node.setDirtyCanvas(true);
-                }, 2000);
+                // If transitioning from hovering to not hovering, start timeout
+                if (wasHovering && !this.isHovering) {
+                    // Mouse left hover area - start 2-second timeout to hide tooltip
+                    this.tooltipTimeout = setTimeout(() => {
+                        this.isHovering = false;
+                        node.setDirtyCanvas(true);
+                    }, 2000);
+                }
+
+                node.setDirtyCanvas(true);
+            } else if (this.isHovering) {
+                // Mouse is hovering and moving - clear any pending timeout
+                // This keeps tooltip visible as long as mouse is in hover area
+                if (this.tooltipTimeout) {
+                    clearTimeout(this.tooltipTimeout);
+                    this.tooltipTimeout = null;
+                }
             }
         }
 
         if (event.type === "pointerup") {
             this.isDragging = false;
             this.mouseDowned = null;
-            // Start safety timeout after mouse release
+            // Clear any pending timeout - tooltip will stay visible while hovering
+            // Only hide when mouse actually leaves hover area (handled by pointermove transition)
             if (this.tooltipTimeout) {
                 clearTimeout(this.tooltipTimeout);
-            }
-            if (this.isHovering) {
-                this.tooltipTimeout = setTimeout(() => {
-                    this.isHovering = false;
-                    node.setDirtyCanvas(true);
-                }, 2000);
+                this.tooltipTimeout = null;
             }
         }
 
@@ -1880,6 +1961,7 @@ class ScaleWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -1920,7 +2002,8 @@ class ModeStatusWidget {
         this.name = name;
         this.type = "custom";
         this.value = "Calculating...";  // Default text
-        this.conflicts = [];  // NEW: Conflict array from Python API
+        this.conflicts = [];  // Calculation conflicts (AR mismatches, etc.)
+        this.sourceWarning = null;  // Source validation warning (disconnect, disabled node, etc.) - SEPARATE from conflicts
         this._cachedDisplayText = null;  // Cached truncated text
         this._lastValue = null;           // Last value used for cache
         this._lastMaxWidth = null;        // Last max width used for cache
@@ -1929,7 +2012,7 @@ class ModeStatusWidget {
         this.tooltip = "Shows current dimension calculation mode (updated automatically, read-only)";
 
         // NEW: Mouse interaction state for tooltip
-        this.isHoveringStatus = false; // Hovering over status text (for conflicts)
+        this.isHoveringStatus = false; // Hovering over status text (for conflicts/warnings)
         this.tooltipTimeout = null;
         this.lastY = 0;  // Store widget Y position for hit testing
         this.lastHeight = 0;
@@ -2029,21 +2112,40 @@ class ModeStatusWidget {
 
         // Draw status text in muted gray
         ctx.fillStyle = this.textColor;  // #aaaaaa
-        const statusX = x + labelWidth + 8;
 
-        // NEW: Reserve space for ⚠️ emoji if conflicts exist
+        // Reserve space for icons on RIGHT side: 🔌 (source warning) and ⚠️ (conflicts) adjacent
+        const hasSourceWarning = this.sourceWarning !== null && this.sourceWarning !== undefined;
         const hasConflicts = this.conflicts && this.conflicts.length > 0;
-        const emojiWidth = hasConflicts ? 20 : 0;
-        const maxWidth = rectWidth - labelWidth - 16 - emojiWidth;
+        const iconSpacing = 2;  // Space between icons
+        const sourceWarningWidth = hasSourceWarning ? 20 : 0;
+        const conflictsWidth = hasConflicts ? 20 : 0;
+        const totalIconWidth = sourceWarningWidth + conflictsWidth + (hasSourceWarning && hasConflicts ? iconSpacing : 0);
+        const statusX = x + labelWidth + 8;
+        const maxWidth = rectWidth - labelWidth - 16 - totalIconWidth;
         const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
+
+        // Draw mode text
+        ctx.fillStyle = this.textColor;
+        ctx.font = "12px monospace";
         ctx.fillText(displayText, statusX, y + displayHeight / 2);
 
-        // NEW: Draw ⚠️ emoji at end if conflicts exist (Option A)
+        // Draw icons on right side, adjacent to each other
+        let currentIconX = x + rectWidth - 4;  // Start from far right
+
+        // Draw conflicts icon (⚠️) first (rightmost)
         if (hasConflicts) {
-            const emojiX = x + rectWidth - 24;
+            currentIconX -= 20;
             ctx.fillStyle = "#ffaa00";  // Amber warning color
             ctx.font = "14px monospace";
-            ctx.fillText("⚠️", emojiX, y + displayHeight / 2);
+            ctx.fillText("⚠️", currentIconX, y + displayHeight / 2);
+        }
+
+        // Draw source warning icon (🔌) to the left of conflicts
+        if (hasSourceWarning) {
+            currentIconX -= (hasConflicts ? iconSpacing : 0) + 20;
+            ctx.fillStyle = "#ff6b6b";  // Red color for source issues
+            ctx.font = "13px monospace";
+            ctx.fillText("🔌", currentIconX, y + displayHeight / 2);
         }
 
         // Border around entire widget
@@ -2058,9 +2160,9 @@ class ModeStatusWidget {
         ctx.lineTo(x + labelWidth, y + displayHeight);
         ctx.stroke();
 
-        // NEW: Draw conflict tooltip if hovering over status section with conflicts
-        if (this.isHoveringStatus && hasConflicts) {
-            this.drawConflictTooltip(ctx, y, width);
+        // NEW: Draw tooltip if hovering over status section (shows source warnings and/or conflicts)
+        if (this.isHoveringStatus && (hasSourceWarning || hasConflicts)) {
+            this.drawWarningTooltip(ctx, y, width);
         }
 
         ctx.restore();
@@ -2071,19 +2173,22 @@ class ModeStatusWidget {
     }
 
     // Update the mode display text and conflicts
-    updateMode(modeDescription, conflicts = []) {
-        if (this.value !== modeDescription || this.conflicts !== conflicts) {
+    updateMode(modeDescription, conflicts = [], sourceWarning = null) {
+        if (this.value !== modeDescription || this.conflicts !== conflicts || this.sourceWarning !== sourceWarning) {
             this.value = modeDescription || "Unknown";
-            this.conflicts = conflicts || [];
+            this.conflicts = conflicts || [];  // Calculation conflicts (AR mismatches, etc.)
+            this.sourceWarning = sourceWarning;  // Source validation warning (separate)
             // Cache will be invalidated on next draw
         }
     }
 
     /**
-     * Draw conflict tooltip showing conflict details (similar to SCALE tooltip)
+     * Draw tooltip showing source warnings and/or conflicts (separate sections)
      */
-    drawConflictTooltip(ctx, widgetY, width) {
-        if (!this.conflicts || this.conflicts.length === 0) return;
+    drawWarningTooltip(ctx, widgetY, width) {
+        const hasSourceWarning = this.sourceWarning !== null && this.sourceWarning !== undefined;
+        const hasConflicts = this.conflicts && this.conflicts.length > 0;
+        if (!hasSourceWarning && !hasConflicts) return;
 
         const margin = 15;
         const padding = 8;
@@ -2091,16 +2196,29 @@ class ModeStatusWidget {
 
         ctx.save();
 
-        // Build tooltip content
-        const lines = [`⚠️  Conflicts detected:`];
+        // Build tooltip content with separate sections
+        const lines = [];
+
+        // Section 1: Source Warning (if present)
+        if (hasSourceWarning) {
+            lines.push(`🔌  Image Source: ${this.sourceWarning.message}`);
+        }
+
+        // Section 2: Conflicts (if present)
+        if (hasConflicts) {
+            if (hasSourceWarning) lines.push(''); // Blank line separator
+            lines.push(`⚠️  Conflicts detected:`);
+        }
+
+        // Calculate max width
+        ctx.font = "bold 11px monospace";
+        let maxTooltipWidth = Math.max(...lines.map(l => ctx.measureText(l).width));
 
         // Add each conflict with word wrapping
-        ctx.font = "bold 11px monospace";
-        let maxTooltipWidth = ctx.measureText(lines[0]).width;
-
-        this.conflicts.forEach(conflict => {
-            const msg = conflict.message || conflict;
-            const indent = '    '; // 4 spaces for indentation
+        if (hasConflicts) {
+            this.conflicts.forEach(conflict => {
+                const msg = conflict.message || conflict;
+                const indent = '    '; // 4 spaces for indentation
             const maxLineWidth = 500; // Maximum width in pixels for wrapped lines
 
             // Measure and wrap based on actual pixel width
@@ -2128,6 +2246,7 @@ class ModeStatusWidget {
                 maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
             }
         });
+        }
 
         // Calculate tooltip dimensions
         const tooltipWidth = maxTooltipWidth + padding * 2;
@@ -2525,6 +2644,7 @@ class DimensionWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -2775,12 +2895,14 @@ class ImageModeWidget {
                 // dimensionLogger.debug('[TOGGLE] Image mode toggled:', oldState, '→', newState);
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
-                // NEW: Mutual exclusivity - disable custom_ratio when enabling USE IMAGE DIMS in AR Only mode
-                if (newState === true && this.value.value === 0) {  // Turning ON and in AR Only mode
+                // NEW: Mutual exclusivity - disable custom_ratio when enabling USE IMAGE DIMS (any mode)
+                // Both Exact Dims and AR Only use image data, so both are mutually exclusive with custom_ratio
+                if (newState === true) {  // Turning ON (either Exact Dims or AR Only)
                     const customRatioWidget = node.widgets?.find(w => w.name === "custom_ratio");
                     if (customRatioWidget && customRatioWidget.value === true) {
                         customRatioWidget.value = false;
-                        logger.info('[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with USE IMAGE DIMS (AR Only)');
+                        const modeName = this.modes[this.value.value];
+                        logger.info(`[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with USE IMAGE DIMS (${modeName})`);
                     }
                 }
 
@@ -2852,6 +2974,7 @@ class ImageModeWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -3059,6 +3182,7 @@ class ColorPickerButton {
     }
 
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -3492,6 +3616,125 @@ app.registerExtension({
                 logger.debug('Added 6 custom widgets to node (image mode + copy button + dimensions + scale)');
                 logger.debug('Widget names:', imageModeWidget.name, copyButton.name, mpWidget.name, widthWidget.name, heightWidget.name, scaleWidget.name);
 
+                // Add image source validation method to node (Scenario 2: Invalid Source Detection)
+                // Called by DimensionSourceManager to detect disabled sources through chain traversal
+                this._validateImageSource = function(imageInput, maxDepth = 10) {
+                    // DIAGNOSTIC: Log validation start (Phase 1 - Reconnect issue diagnosis)
+                    logger.debug('[VALIDATION] Starting validation');
+                    logger.debug('[VALIDATION] imageInput:', imageInput);
+                    logger.debug('[VALIDATION] imageInput.link:', imageInput?.link);
+
+                    if (!imageInput || !imageInput.link) {
+                        logger.debug('[VALIDATION] Result: no_connection');
+                        return { valid: false, reason: 'no_connection', severity: 'info' };
+                    }
+
+                    let currentInput = imageInput;
+                    let depth = 0;
+                    const visitedNodes = new Set();
+                    const chain = [];  // For debugging/logging
+
+                    while (depth < maxDepth) {
+                        const link = this.graph.links[currentInput.link];
+
+                        // DIAGNOSTIC: Log link lookup (Phase 1)
+                        logger.debug(`[VALIDATION] Depth ${depth}: Looking up link ${currentInput.link}`);
+                        logger.debug(`[VALIDATION] Depth ${depth}: Link object exists:`, !!link);
+
+                        if (!link) {
+                            logger.debug(`[VALIDATION] Result: broken_link at depth ${depth}, chain:`, chain);
+                            return {
+                                valid: false,
+                                reason: 'broken_link',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+
+                        const sourceNode = this.graph.getNodeById(link.origin_id);
+                        if (!sourceNode) {
+                            return {
+                                valid: false,
+                                reason: 'missing_node',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+
+                        chain.push(sourceNode.title || sourceNode.type);
+
+                        // Check for circular references
+                        if (visitedNodes.has(sourceNode.id)) {
+                            return {
+                                valid: false,
+                                reason: 'circular_reference',
+                                severity: 'error',
+                                depth,
+                                chain
+                            };
+                        }
+                        visitedNodes.add(sourceNode.id);
+
+                        // Check if source is disabled/bypassed
+                        // LiteGraph.NEVER = 2, BYPASS = 4
+                        if (sourceNode.mode === 2 || sourceNode.mode === 4) {
+                            return {
+                                valid: false,
+                                reason: 'disabled_source',
+                                severity: 'warning',
+                                depth,
+                                nodeName: sourceNode.title || sourceNode.type,
+                                chain
+                            };
+                        }
+
+                        // Check if this is a reroute node - follow its input
+                        // Multiple detection methods for different ComfyUI versions
+                        const isReroute = sourceNode.type === 'Reroute' ||
+                                        sourceNode.constructor.name === 'Reroute' ||
+                                        (sourceNode.comfyClass && sourceNode.comfyClass === 'Reroute');
+
+                        if (isReroute) {
+                            const rerouteInput = sourceNode.inputs?.[0];
+                            if (rerouteInput && rerouteInput.link) {
+                                currentInput = rerouteInput;
+                                depth++;
+                                continue;
+                            } else {
+                                // Reroute with no input = broken
+                                return {
+                                    valid: false,
+                                    reason: 'reroute_no_input',
+                                    severity: 'error',
+                                    depth,
+                                    chain
+                                };
+                            }
+                        }
+
+                        // Reached actual source node (not a reroute)
+                        logger.debug(`[VALIDATION] Result: valid, source="${sourceNode.title || sourceNode.type}", depth=${depth}, chain:`, chain);
+                        return {
+                            valid: true,
+                            depth,
+                            nodeName: sourceNode.title || sourceNode.type,
+                            chain
+                        };
+                    }
+
+                    // Max depth exceeded
+                    logger.debug(`[VALIDATION] Result: max_depth_exceeded at depth ${depth}`);
+                    return {
+                        valid: false,
+                        reason: 'max_depth_exceeded',
+                        severity: 'warning',
+                        depth,
+                        chain
+                    };
+                };
+
                 // Initialize DimensionSourceManager for centralized dimension calculation
                 this.dimensionSourceManager = new DimensionSourceManager(this);
                 logger.debug('Initialized DimensionSourceManager');
@@ -3530,27 +3773,40 @@ app.registerExtension({
                 this.setSize(this.computeSize());
 
                 // Helper function to update MODE widget with current dimension source
-                const updateModeWidget = async () => {
+                // @param {boolean} forceRefresh - If true, bypass cache and force recalculation
+                const updateModeWidget = async (forceRefresh = false) => {
+                    // DIAGNOSTIC: Log updateModeWidget call (Phase 1)
+                    logger.debug('[UPDATE-MODE] updateModeWidget called, forceRefresh:', forceRefresh);
+
                     const modeWidget = this.widgets.find(w => w.name === "mode_status");
                     if (modeWidget && this.dimensionSourceManager) {
                         // Get imageDimensionsCache from stored ScaleWidget reference
                         const imageDimensionsCache = this.scaleWidgetInstance?.imageDimensionsCache;
 
+                        logger.debug('[UPDATE-MODE] Calling getActiveDimensionSource with forceRefresh:', forceRefresh);
+
                         // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
                         // Calls Python API for single source of truth
-                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(false, {
+                        // forceRefresh=true bypasses cache (used when image connection changes)
+                        const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(forceRefresh, {
                             imageDimensionsCache: imageDimensionsCache
                         });
+
+                        logger.debug('[UPDATE-MODE] Received dimSource:', dimSource?.mode, dimSource?.description);
 
                         if (dimSource) {
                             const scaleWidget = this.widgets.find(w => w.name === "scale" && w.type === "custom");
                             if (scaleWidget && scaleWidget.getSimplifiedModeLabel) {
                                 const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource);
                                 if (modeLabel) {
-                                    // NEW: Update mode widget with conflicts from Python API
+                                    // Update mode widget with conflicts AND source warnings (separate systems)
                                     if (modeWidget.updateMode) {
                                         // Custom widget with updateMode method
-                                        modeWidget.updateMode(modeLabel, dimSource.conflicts || []);
+                                        modeWidget.updateMode(
+                                            modeLabel,
+                                            dimSource.conflicts || [],  // Calculation conflicts (AR mismatches, etc.)
+                                            dimSource.sourceWarning || null  // Source validation warning (separate)
+                                        );
                                     } else {
                                         // Fallback for native ComfyUI widget
                                         modeWidget.value = modeLabel;
@@ -3603,13 +3859,15 @@ app.registerExtension({
                             originalCallback.call(customRatioWidget, value);
                         }
 
-                        // NEW: Mutual exclusivity - disable USE IMAGE DIMS if enabling custom_ratio and imageMode is AR Only
+                        // NEW: Mutual exclusivity - disable USE IMAGE DIMS if enabling custom_ratio (any mode)
+                        // Both Exact Dims and AR Only use image data, so both are mutually exclusive with custom_ratio
                         if (value === true) {
                             const imageModeWidget = this.widgets.find(w => w.name === "image_mode");
-                            if (imageModeWidget && imageModeWidget.value?.on && imageModeWidget.value?.value === 0) {
-                                // USE IMAGE DIMS is ON and in AR Only mode
+                            if (imageModeWidget && imageModeWidget.value?.on) {
+                                // USE IMAGE DIMS is ON (either Exact Dims or AR Only)
+                                const modeName = imageModeWidget.value?.value === 0 ? 'AR Only' : 'Exact Dims';
                                 imageModeWidget.value.on = false;
-                                logger.info('[custom_ratio] Auto-disabled USE IMAGE DIMS (AR Only) due to mutual exclusivity');
+                                logger.info(`[custom_ratio] Auto-disabled USE IMAGE DIMS (${modeName}) due to mutual exclusivity`);
                             }
                         }
 
@@ -3799,6 +4057,20 @@ app.registerExtension({
                     visibilityLogger.debug(`Image input connected: ${hasConnection}`);
                     visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
 
+                    // DIAGNOSTIC: Check link existence in graph (Phase 1 - Reconnect issue diagnosis)
+                    if (imageInput && imageInput.link != null) {
+                        const linkObject = this.graph.links[imageInput.link];
+                        visibilityLogger.debug('[RECONNECT-DEBUG] Link ID:', imageInput.link);
+                        visibilityLogger.debug('[RECONNECT-DEBUG] Link exists in graph.links:', !!linkObject);
+                        if (linkObject) {
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Link origin_id:', linkObject.origin_id);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Link target_id:', linkObject.target_id);
+                            const sourceNode = this.graph.getNodeById(linkObject.origin_id);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Source node exists:', !!sourceNode);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Source node type:', sourceNode?.type);
+                        }
+                    }
+
                     // Update ImageModeWidget's imageDisconnected property (v0.6.1)
                     // This property controls the asymmetric toggle behavior
                     const imageModeWidget = this.imageOutputWidgets.image_mode;
@@ -3969,6 +4241,17 @@ app.registerExtension({
                             } else if (copyButtonWidget) {
                                 visibilityLogger.debug(`copy_from_image already visible at ${this.widgets.indexOf(copyButtonWidget)}`);
                             }
+
+                            // 7. After ALL widgets restored, refresh image dimensions
+                            // CRITICAL: Must happen AFTER image_mode widget restored, otherwise refreshImageDimensions
+                            // can't find the widget and returns early thinking USE_IMAGE is disabled
+                            // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
+                            if (this.scaleWidgetInstance && this.scaleWidgetInstance.refreshImageDimensions) {
+                                logger.info('[Visibility] Widgets restored, triggering dimension refresh');
+                                this.scaleWidgetInstance.refreshImageDimensions(this);
+                            } else {
+                                logger.debug('[Visibility] No scale widget or refresh method found');
+                            }
                         } else {
                             visibilityLogger.error("Cannot find fill_color for button placement");
                         }
@@ -4006,6 +4289,16 @@ app.registerExtension({
 
                             this.widgets.splice(item.currentIndex, 1);
                         });
+
+                        // Update Mode(AR) for disconnect (backend state overridden, show defaults)
+                        // NOTE: For RECONNECT, updateModeWidget() is called in refreshImageDimensions()
+                        // after imageDimensionsCache is populated. This fixes timing issue where
+                        // runtime_context.image_info was empty on reconnect.
+                        // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
+                        if (this.updateModeWidget) {
+                            this.updateModeWidget(true);  // Force refresh to bypass cache
+                            visibilityLogger.debug('Triggered updateModeWidget(forceRefresh=true) for disconnect');
+                        }
                     }
 
                     // Resize node to accommodate shown/hidden widgets
@@ -4456,15 +4749,9 @@ app.registerExtension({
                                 imageModeWidget.imageDisconnected = false;
                             }
 
-                            // Trigger dimension cache refresh for scale tooltip
-                            if (scaleWidget && scaleWidget.refreshImageDimensions) {
-                                // dimensionLogger.debug('[CONNECTION] Calling refreshImageDimensions for connected image');
-                                logger.info('[Connection] Image connected, triggering scale dimension refresh');
-                                scaleWidget.refreshImageDimensions(this);
-                            } else {
-                                // dimensionLogger.debug('[CONNECTION] No scale widget or refresh method found');
-                                logger.debug('[Connection] No scale widget or refresh method found');
-                            }
+                            // NOTE: refreshImageDimensions() moved to updateImageOutputVisibility()
+                            // Must be called AFTER widgets are restored, otherwise image_mode widget not found
+                            // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {

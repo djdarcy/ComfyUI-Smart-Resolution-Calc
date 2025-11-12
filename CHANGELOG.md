@@ -5,6 +5,131 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2025-11-12
+
+### Fixed
+- **SCALE Tooltip Timeout** - Tooltip now stays visible while hovering over handle
+  - Previous behavior: Tooltip disappeared after 2 seconds even while hovering
+  - New behavior: Tooltip remains visible indefinitely while mouse over handle
+  - Timeout only starts when mouse leaves the handle area
+  - After leaving handle, 2-second grace period before tooltip disappears
+- **SCALE Tooltip Hover Precision** - Tooltip only appears when hovering over green handle knob
+  - Previous behavior: Tooltip showed for entire slider track, handle, and value text
+  - New behavior: Tooltip only shows when directly over the small green handle
+  - Less intrusive - allows viewing elements below SCALE widget without tooltip blocking
+  - More precise hover target reduces accidental tooltip triggering
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Lines 1877-1916: Refactored pointermove handler to detect hover state transitions
+  - Timeout only starts on hover→not-hover transition (wasHovering && !this.isHovering)
+  - While hovering, any pending timeout is cleared (keeps tooltip visible)
+  - Hover detection simplified to `this.isInBounds(pos, this.hitAreas.handle)` only
+  - Removed slider track and value text from hover detection areas
+
+### Benefits
+- ✅ **Better UX for Dense Workflows**: Tooltip doesn't block view of nodes below
+- ✅ **Persistent Calculations**: Users can examine tooltip without it disappearing
+- ✅ **Precise Interaction**: Only shows tooltip when intentionally hovering over handle
+- ✅ **Natural Behavior**: Tooltip stays as long as you're hovering, hides when you leave
+
+## [0.6.4] - 2025-11-12
+
+### Fixed
+- **Info Output Duplication** - Removed duplicate "From Image" and "Scale" information
+  - Eliminated mode_info prepending that showed dimensions twice
+  - Info output now shows clean, consolidated information
+  - Example fix: `From Image (Exact: 1200×1200) @ 1.2x | Mode: ... | From Image: 1200×1200 | Scale: 1.2x` → `Mode: USE IMAGE DIMS = Exact Dims | From Image: 1200×1200 | Scale: 1.2x`
+- **Aspect Ratio Field Addition** - Info output now always includes AR when not already mentioned
+  - Conditionally adds `| AR: X:Y |` field to info string
+  - Uses regex word boundaries to detect existing AR mentions (avoids false positives like "Scalar")
+  - Ensures AR is visible for all modes (Exact Dims, WIDTH/HEIGHT explicit, etc.)
+  - Case-insensitive detection with `.lower()` preprocessing
+- **Mutual Exclusivity Bug** - Fixed incomplete mutual exclusivity between custom_ratio and USE IMAGE DIMS
+  - Both Exact Dims and AR Only modes now properly disable custom_ratio when enabled
+  - custom_ratio enabling now properly disables USE IMAGE DIMS regardless of mode
+  - Previous bug: Exact Dims mode allowed both custom_ratio and USE IMAGE DIMS enabled simultaneously
+  - AR Only mode already worked, but Exact Dims case was missing
+
+### Changed
+- **Info Output Display** - Enhanced info output to show latent source
+  - Now shows "Latent: VAE Encoded" when VAE input connected
+  - Clearly indicates whether using empty latent (txt2img) or VAE-encoded latent (img2img)
+  - Visible in node info output and new screenshot
+
+### Technical
+- **Python Changes** (`py/smart_resolution_calc.py`):
+  - Lines 1346-1366: Removed duplicate mode_info prepending, added intelligent AR field detection
+  - Uses `re.search(r'\bar\b', info_so_far)` with word boundaries for accurate AR detection
+  - Conditionally adds `| AR: X:Y |` when AR not already mentioned in mode display or info detail
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Line 2898: Removed `&& this.value.value === 0` condition to extend mutual exclusivity to both modes
+  - Line 3864: Removed `&& imageModeWidget.value?.value === 0` condition to cover both Exact Dims and AR Only
+  - Both ImageModeWidget and custom_ratio callbacks now enforce mutual exclusivity bidirectionally
+
+### Benefits
+- ✅ **Cleaner Info Output**: No duplicate information, easier to read calculation results
+- ✅ **AR Visibility**: Aspect ratio always visible in info output for all modes
+- ✅ **Consistent Widget Behavior**: Mutual exclusivity properly enforced for all image modes
+- ✅ **Better UX**: Users can see VAE encoding status in info output
+
+### Notes
+- Screenshot updated to show "Latent: VAE Encoded" in info output
+- README.md caption updated to reflect new VAE visibility feature
+- Fixes discovered during Scenario 1 testing and polishing phase
+
+### Related Documents
+- 2025-11-12__14-23-05__context-postmortem_scenario-1-polish-and-next-work.md
+
+## [0.6.3] - 2025-11-12
+
+### Added
+- **Pending Data Display (Scenario 1)** - Generator node workflows now show user intent before execution
+  - Mode(AR) displays `(?:?)` when image dimensions unknown (KSampler, RandomNoise, etc.)
+  - Shows `"IMG Exact Dims (?:?)"` when Exact Dims enabled with generator
+  - Shows `"WIDTH & IMG AR Only (?:?)"` when AR Only enabled with dimension widgets
+  - Acknowledges user's image mode choice instead of showing misleading defaults
+  - Updates to actual values after workflow execution when data becomes available
+
+### Fixed
+- **Reconnection Mode Updates** - Mode(AR) now updates immediately when connecting generator nodes
+  - Previously stayed on default modes after reconnecting to generator
+  - Now correctly shows pending state `(?:?)` on reconnection
+  - Same pattern as Scenario 2 fix, applied to generator node case
+- **AR Only Info Output** - Info now shows calculated dimensions for AR Only mode
+  - Before: `"Using image AR 1:1"` (missing final dimensions)
+  - After: `"HEIGHT: 1000, calculated W: 1000 from image AR 1:1"`
+  - Shows which dimension source active and what was calculated
+  - Includes all four AR Only variants: WIDTH, HEIGHT, MEGAPIXEL, defaults
+- **Tooltip Null Handling** - Scale widget tooltip shows `?` for unknown values
+  - Prevents `0.00 MP` when dimensions pending (now shows `? MP`)
+  - Shows `? × ?` for all unknown dimension values
+  - Applies to Base, Scaled, and Final dimensions in tooltip
+
+### Technical
+- **Python Changes** (`py/smart_resolution_calc.py`):
+  - Lines 143-187: `_calculate_exact_dims()` returns `exact_dims_pending` mode when no image_info
+  - Lines 282-305: Added `_get_primary_dimension_source()` helper to determine active dimension
+  - Lines 315-337: `_calculate_ar_only()` returns `ar_only_pending` mode when no image_info
+  - Lines 1143-1153: Enhanced AR Only info output to show calculated dimensions
+  - All pending modes return explicit `None` values, never `undefined`
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Lines 1351-1355: `_getARRatio()` returns `'?:?'` when `ar.source === 'image_pending'`
+  - Lines 1381-1393: `getSimplifiedModeLabel()` handles `exact_dims_pending` and `ar_only_pending` modes
+  - Lines 1473-1495: Tooltip formatting with `formatDim()` and `formatMp()` helpers for null values
+  - Lines 973-996: `calculatePreview()` early return with all null values for pending states
+  - Lines 1140-1145: `refreshImageDimensions()` calls `updateModeWidget()` at Tier 3 for generators
+
+### Benefits
+- ✅ **User Intent Preserved**: Shows what user chose (`IMG Exact Dims`) even when data pending
+- ✅ **No Misleading Defaults**: Clearly indicates unknown values with `?` instead of fallback dimensions
+- ✅ **Generator Node Support**: Works with KSampler, RandomNoise, and any node without file path
+- ✅ **Informative Output**: Info string shows calculation logic and final dimensions
+
+### Related Issues
+- Completes Issue #32 Scenario 1 - Pending Data Display
+- Related to Issue #33 - Future enhancement for dynamic dimension inputs
+
 ## [0.6.2] - 2025-11-11
 
 ### Fixed
