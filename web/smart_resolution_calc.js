@@ -1875,17 +1875,10 @@ class ScaleWidget {
         }
 
         if (event.type === "pointermove") {
-            // Clear any existing safety timeout
-            if (this.tooltipTimeout) {
-                clearTimeout(this.tooltipTimeout);
-                this.tooltipTimeout = null;
-            }
-
             // Update hover state based on mouse position
+            // Only show tooltip when hovering over the handle (green knob), not the entire slider track
             const wasHovering = this.isHovering;
-            this.isHovering = this.isInBounds(pos, this.hitAreas.slider) ||
-                             this.isInBounds(pos, this.hitAreas.handle) ||
-                             this.isInBounds(pos, this.hitAreas.valueEdit);
+            this.isHovering = this.isInBounds(pos, this.hitAreas.handle);
 
             // Handle dragging
             if (this.isDragging && this.mouseDowned) {
@@ -1894,33 +1887,42 @@ class ScaleWidget {
                 return true;
             }
 
-            // Redraw if hover state changed
+            // Handle hover state changes
             if (wasHovering !== this.isHovering) {
-                node.setDirtyCanvas(true);
-            }
+                // Clear any existing timeout when hover state changes
+                if (this.tooltipTimeout) {
+                    clearTimeout(this.tooltipTimeout);
+                    this.tooltipTimeout = null;
+                }
 
-            // Safety timeout: hide tooltip after 2 seconds of no mouse movement
-            // This handles cases where pointerleave doesn't fire (e.g., switching windows)
-            if (this.isHovering) {
-                this.tooltipTimeout = setTimeout(() => {
-                    this.isHovering = false;
-                    node.setDirtyCanvas(true);
-                }, 2000);
+                // If transitioning from hovering to not hovering, start timeout
+                if (wasHovering && !this.isHovering) {
+                    // Mouse left hover area - start 2-second timeout to hide tooltip
+                    this.tooltipTimeout = setTimeout(() => {
+                        this.isHovering = false;
+                        node.setDirtyCanvas(true);
+                    }, 2000);
+                }
+
+                node.setDirtyCanvas(true);
+            } else if (this.isHovering) {
+                // Mouse is hovering and moving - clear any pending timeout
+                // This keeps tooltip visible as long as mouse is in hover area
+                if (this.tooltipTimeout) {
+                    clearTimeout(this.tooltipTimeout);
+                    this.tooltipTimeout = null;
+                }
             }
         }
 
         if (event.type === "pointerup") {
             this.isDragging = false;
             this.mouseDowned = null;
-            // Start safety timeout after mouse release
+            // Clear any pending timeout - tooltip will stay visible while hovering
+            // Only hide when mouse actually leaves hover area (handled by pointermove transition)
             if (this.tooltipTimeout) {
                 clearTimeout(this.tooltipTimeout);
-            }
-            if (this.isHovering) {
-                this.tooltipTimeout = setTimeout(() => {
-                    this.isHovering = false;
-                    node.setDirtyCanvas(true);
-                }, 2000);
+                this.tooltipTimeout = null;
             }
         }
 
