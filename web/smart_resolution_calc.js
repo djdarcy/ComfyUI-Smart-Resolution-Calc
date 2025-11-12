@@ -995,73 +995,48 @@ class ScaleWidget {
         dimensionLogger.verbose('[REFRESH] imageModeWidget:', imageModeWidget);
         dimensionLogger.verbose('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
 
-        // DIAGNOSTIC: Log early return reason (reconnect debugging)
-        logger.debug('[REFRESH] imageModeWidget exists:', !!imageModeWidget);
-        logger.debug('[REFRESH] imageModeWidget.value:', imageModeWidget?.value);
-        logger.debug('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
-
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
-            logger.info('[REFRESH] ✗ Early return: USE_IMAGE disabled, clearing cache');
+            dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
             return;
         }
 
         // Get connected image node
         const imageInput = node.inputs?.find(inp => inp.name === "image");
         const link = imageInput?.link;
-        dimensionLogger.verbose('[REFRESH] imageInput:', imageInput);
-        dimensionLogger.verbose('[REFRESH] link:', link);
-
-        // DIAGNOSTIC: Log link state
-        logger.debug('[REFRESH] imageInput exists:', !!imageInput);
-        logger.debug('[REFRESH] link:', link);
 
         if (!link) {
             this.imageDimensionsCache = null;
-            logger.info('[REFRESH] ✗ Early return: No image connected, clearing cache');
+            dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
             return;
         }
 
         // Get source node from link
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
-        dimensionLogger.verbose('[REFRESH] sourceNode:', sourceNode);
-
-        // DIAGNOSTIC: Log source node state
-        logger.debug('[REFRESH] linkInfo:', linkInfo);
-        logger.debug('[REFRESH] sourceNode exists:', !!sourceNode);
-        logger.debug('[REFRESH] sourceNode type:', sourceNode?.type);
 
         if (!sourceNode) {
             this.imageDimensionsCache = null;
-            logger.info('[REFRESH] ✗ Early return: Source node not found, clearing cache');
+            dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
             return;
         }
 
         // Check cache validity (same image path)
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
-        dimensionLogger.debug('[REFRESH] filePath:', filePath);
-        dimensionLogger.verbose('[REFRESH] Current cache:', this.imageDimensionsCache);
-
-        // DIAGNOSTIC: Log cache validity check
-        logger.debug('[REFRESH] filePath from source:', filePath);
-        logger.debug('[REFRESH] cached path:', this.imageDimensionsCache?.path);
-        logger.debug('[REFRESH] cache valid?:', this.imageDimensionsCache?.path === filePath && filePath);
 
         if (this.imageDimensionsCache?.path === filePath && filePath) {
-            logger.info(`[REFRESH] ✗ Early return: Using cached dimensions for ${filePath} (cache still valid)`);
+            dimensionLogger.debug(`[REFRESH] Using cached dimensions for ${filePath}`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
-            logger.info('[REFRESH] ✗ Early return: Already fetching dimensions, skipping');
+            dimensionLogger.debug('[REFRESH] Already fetching, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
-        dimensionLogger.debug('[REFRESH] Starting hybrid fetch strategy');
-        logger.info('[REFRESH] ✓ Starting dimension fetch (no early returns triggered)');
+        dimensionLogger.debug('[REFRESH] Starting dimension fetch');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
