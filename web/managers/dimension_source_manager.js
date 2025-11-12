@@ -185,12 +185,15 @@ export class DimensionSourceManager {
 
             logger.debug('[Manager] Python API success:', result);
 
-            // Inject source validation warnings if source is invalid (Scenario 2)
-            if (!sourceValidation.valid && result.dimSource) {
-                const sourceConflict = this._createSourceConflict(sourceValidation);
-                result.dimSource.conflicts = result.dimSource.conflicts || [];
-                result.dimSource.conflicts.push(sourceConflict);
-                logger.debug('[Manager] Injected source validation conflict:', sourceConflict);
+            // Add source validation as separate property (NOT part of calculation conflicts)
+            // Source validation and calculation conflicts are separate concerns
+            // IMPORTANT: Always explicitly set sourceWarning (either object or null) to prevent stale values
+            if (!sourceValidation.valid && result) {
+                result.sourceWarning = this._createSourceWarning(sourceValidation);
+                logger.debug('[Manager] Added source validation warning:', result.sourceWarning);
+            } else {
+                result.sourceWarning = null;
+                logger.debug('[Manager] No source warning - image source is valid');
             }
 
             return result;
@@ -234,29 +237,29 @@ export class DimensionSourceManager {
     }
 
     /**
-     * Create conflict object for invalid image source (Scenario 2)
-     * Converts validation result into conflict object compatible with existing warning system.
+     * Create source warning object for invalid image source (Scenario 2)
+     * Separate from calculation conflicts - indicates source connectivity issues.
      *
      * @param {Object} validation - Validation result from _validateImageSource()
-     * @returns {Object} Conflict object for warning system
+     * @returns {Object} Source warning object
      */
-    _createSourceConflict(validation) {
+    _createSourceWarning(validation) {
         const messages = {
             'no_connection': 'No image connected',
             'broken_link': 'Image connection is broken',
             'missing_node': 'Source node not found',
             'circular_reference': 'Circular reference in image connections',
-            'disabled_source': `Image source "${validation.nodeName}" is disabled - using defaults`,
+            'disabled_source': `Image source "${validation.nodeName}" is disabled`,
             'reroute_no_input': 'Reroute node has no input',
             'max_depth_exceeded': 'Image connection chain too deep (possible circular reference)'
         };
 
         return {
-            type: 'invalid_image_source',
+            reason: validation.reason,
             severity: validation.severity,
             message: messages[validation.reason] || `Invalid image source: ${validation.reason}`,
-            affectedWidgets: ['image_mode'],
-            validationDetails: validation  // Include full details for debugging
+            icon: '🔌',  // Disconnected plug icon
+            validation: validation  // Include full details for debugging
         };
     }
 

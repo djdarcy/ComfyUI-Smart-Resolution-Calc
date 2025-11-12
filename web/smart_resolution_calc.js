@@ -1029,6 +1029,8 @@ class ScaleWidget {
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
             dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
+            // Still update Mode(AR) to clear any stale source warnings (image may have reconnected)
+            await node.updateModeWidget(true);
             return;
         }
 
@@ -1951,7 +1953,8 @@ class ModeStatusWidget {
         this.name = name;
         this.type = "custom";
         this.value = "Calculating...";  // Default text
-        this.conflicts = [];  // NEW: Conflict array from Python API
+        this.conflicts = [];  // Calculation conflicts (AR mismatches, etc.)
+        this.sourceWarning = null;  // Source validation warning (disconnect, disabled node, etc.) - SEPARATE from conflicts
         this._cachedDisplayText = null;  // Cached truncated text
         this._lastValue = null;           // Last value used for cache
         this._lastMaxWidth = null;        // Last max width used for cache
@@ -1960,7 +1963,7 @@ class ModeStatusWidget {
         this.tooltip = "Shows current dimension calculation mode (updated automatically, read-only)";
 
         // NEW: Mouse interaction state for tooltip
-        this.isHoveringStatus = false; // Hovering over status text (for conflicts)
+        this.isHoveringStatus = false; // Hovering over status text (for conflicts/warnings)
         this.tooltipTimeout = null;
         this.lastY = 0;  // Store widget Y position for hit testing
         this.lastHeight = 0;
@@ -2060,21 +2063,40 @@ class ModeStatusWidget {
 
         // Draw status text in muted gray
         ctx.fillStyle = this.textColor;  // #aaaaaa
-        const statusX = x + labelWidth + 8;
 
-        // NEW: Reserve space for ⚠️ emoji if conflicts exist
+        // Reserve space for icons on RIGHT side: 🔌 (source warning) and ⚠️ (conflicts) adjacent
+        const hasSourceWarning = this.sourceWarning !== null && this.sourceWarning !== undefined;
         const hasConflicts = this.conflicts && this.conflicts.length > 0;
-        const emojiWidth = hasConflicts ? 20 : 0;
-        const maxWidth = rectWidth - labelWidth - 16 - emojiWidth;
+        const iconSpacing = 2;  // Space between icons
+        const sourceWarningWidth = hasSourceWarning ? 20 : 0;
+        const conflictsWidth = hasConflicts ? 20 : 0;
+        const totalIconWidth = sourceWarningWidth + conflictsWidth + (hasSourceWarning && hasConflicts ? iconSpacing : 0);
+        const statusX = x + labelWidth + 8;
+        const maxWidth = rectWidth - labelWidth - 16 - totalIconWidth;
         const displayText = this._getTruncatedText(ctx, this.value, maxWidth);
+
+        // Draw mode text
+        ctx.fillStyle = this.textColor;
+        ctx.font = "12px monospace";
         ctx.fillText(displayText, statusX, y + displayHeight / 2);
 
-        // NEW: Draw ⚠️ emoji at end if conflicts exist (Option A)
+        // Draw icons on right side, adjacent to each other
+        let currentIconX = x + rectWidth - 4;  // Start from far right
+
+        // Draw conflicts icon (⚠️) first (rightmost)
         if (hasConflicts) {
-            const emojiX = x + rectWidth - 24;
+            currentIconX -= 20;
             ctx.fillStyle = "#ffaa00";  // Amber warning color
             ctx.font = "14px monospace";
-            ctx.fillText("⚠️", emojiX, y + displayHeight / 2);
+            ctx.fillText("⚠️", currentIconX, y + displayHeight / 2);
+        }
+
+        // Draw source warning icon (🔌) to the left of conflicts
+        if (hasSourceWarning) {
+            currentIconX -= (hasConflicts ? iconSpacing : 0) + 20;
+            ctx.fillStyle = "#ff6b6b";  // Red color for source issues
+            ctx.font = "13px monospace";
+            ctx.fillText("🔌", currentIconX, y + displayHeight / 2);
         }
 
         // Border around entire widget
@@ -2089,9 +2111,9 @@ class ModeStatusWidget {
         ctx.lineTo(x + labelWidth, y + displayHeight);
         ctx.stroke();
 
-        // NEW: Draw conflict tooltip if hovering over status section with conflicts
-        if (this.isHoveringStatus && hasConflicts) {
-            this.drawConflictTooltip(ctx, y, width);
+        // NEW: Draw tooltip if hovering over status section (shows source warnings and/or conflicts)
+        if (this.isHoveringStatus && (hasSourceWarning || hasConflicts)) {
+            this.drawWarningTooltip(ctx, y, width);
         }
 
         ctx.restore();
@@ -2102,19 +2124,22 @@ class ModeStatusWidget {
     }
 
     // Update the mode display text and conflicts
-    updateMode(modeDescription, conflicts = []) {
-        if (this.value !== modeDescription || this.conflicts !== conflicts) {
+    updateMode(modeDescription, conflicts = [], sourceWarning = null) {
+        if (this.value !== modeDescription || this.conflicts !== conflicts || this.sourceWarning !== sourceWarning) {
             this.value = modeDescription || "Unknown";
-            this.conflicts = conflicts || [];
+            this.conflicts = conflicts || [];  // Calculation conflicts (AR mismatches, etc.)
+            this.sourceWarning = sourceWarning;  // Source validation warning (separate)
             // Cache will be invalidated on next draw
         }
     }
 
     /**
-     * Draw conflict tooltip showing conflict details (similar to SCALE tooltip)
+     * Draw tooltip showing source warnings and/or conflicts (separate sections)
      */
-    drawConflictTooltip(ctx, widgetY, width) {
-        if (!this.conflicts || this.conflicts.length === 0) return;
+    drawWarningTooltip(ctx, widgetY, width) {
+        const hasSourceWarning = this.sourceWarning !== null && this.sourceWarning !== undefined;
+        const hasConflicts = this.conflicts && this.conflicts.length > 0;
+        if (!hasSourceWarning && !hasConflicts) return;
 
         const margin = 15;
         const padding = 8;
@@ -2122,16 +2147,29 @@ class ModeStatusWidget {
 
         ctx.save();
 
-        // Build tooltip content
-        const lines = [`⚠️  Conflicts detected:`];
+        // Build tooltip content with separate sections
+        const lines = [];
+
+        // Section 1: Source Warning (if present)
+        if (hasSourceWarning) {
+            lines.push(`🔌  Image Source: ${this.sourceWarning.message}`);
+        }
+
+        // Section 2: Conflicts (if present)
+        if (hasConflicts) {
+            if (hasSourceWarning) lines.push(''); // Blank line separator
+            lines.push(`⚠️  Conflicts detected:`);
+        }
+
+        // Calculate max width
+        ctx.font = "bold 11px monospace";
+        let maxTooltipWidth = Math.max(...lines.map(l => ctx.measureText(l).width));
 
         // Add each conflict with word wrapping
-        ctx.font = "bold 11px monospace";
-        let maxTooltipWidth = ctx.measureText(lines[0]).width;
-
-        this.conflicts.forEach(conflict => {
-            const msg = conflict.message || conflict;
-            const indent = '    '; // 4 spaces for indentation
+        if (hasConflicts) {
+            this.conflicts.forEach(conflict => {
+                const msg = conflict.message || conflict;
+                const indent = '    '; // 4 spaces for indentation
             const maxLineWidth = 500; // Maximum width in pixels for wrapped lines
 
             // Measure and wrap based on actual pixel width
@@ -2159,6 +2197,7 @@ class ModeStatusWidget {
                 maxTooltipWidth = Math.max(maxTooltipWidth, ctx.measureText(currentLine).width);
             }
         });
+        }
 
         // Calculate tooltip dimensions
         const tooltipWidth = maxTooltipWidth + padding * 2;
@@ -3709,10 +3748,14 @@ app.registerExtension({
                             if (scaleWidget && scaleWidget.getSimplifiedModeLabel) {
                                 const modeLabel = scaleWidget.getSimplifiedModeLabel(dimSource);
                                 if (modeLabel) {
-                                    // NEW: Update mode widget with conflicts from Python API
+                                    // Update mode widget with conflicts AND source warnings (separate systems)
                                     if (modeWidget.updateMode) {
                                         // Custom widget with updateMode method
-                                        modeWidget.updateMode(modeLabel, dimSource.conflicts || []);
+                                        modeWidget.updateMode(
+                                            modeLabel,
+                                            dimSource.conflicts || [],  // Calculation conflicts (AR mismatches, etc.)
+                                            dimSource.sourceWarning || null  // Source validation warning (separate)
+                                        );
                                     } else {
                                         // Fallback for native ComfyUI widget
                                         modeWidget.value = modeLabel;
