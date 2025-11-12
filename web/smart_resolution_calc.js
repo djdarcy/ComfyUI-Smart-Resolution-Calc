@@ -739,20 +739,51 @@ const ImageDimensionUtils = {
      * Extract file path from LoadImage node
      * Returns null if not a LoadImage node or path not found
      */
-    getImageFilePath(sourceNode) {
+    getImageFilePath(sourceNode, maxDepth = 10) {
         if (!sourceNode) return null;
 
-        // Check if this is a LoadImage node
-        if (sourceNode.type === "LoadImage" || sourceNode.title?.includes("Load Image")) {
-            // Try to get the image filename from the widget
-            const imageWidget = sourceNode.widgets?.find(w => w.name === "image");
+        // Generic traversal: Follow input connections until we find a node with image data
+        // This works with ANY node type (LoadImage, custom loaders, reroutes, etc.)
+        let currentNode = sourceNode;
+        let depth = 0;
+        const visitedNodes = new Set();
+
+        while (depth < maxDepth) {
+            // Prevent circular references
+            if (visitedNodes.has(currentNode.id)) {
+                logger.verbose('[ImageUtils] Circular reference detected in connection chain');
+                return null;
+            }
+            visitedNodes.add(currentNode.id);
+
+            // Check if this node has an image widget with a filename
+            // This works for LoadImage and any other node that loads images from files
+            const imageWidget = currentNode.widgets?.find(w => w.name === "image");
             if (imageWidget && imageWidget.value) {
-                logger.verbose(`Found LoadImage with filename: ${imageWidget.value}`);
+                logger.verbose(`[ImageUtils] Found image source at node '${currentNode.title || currentNode.type}' with filename: ${imageWidget.value}`);
                 return imageWidget.value;
             }
+
+            // This node doesn't have the data we need - check if it has an input to traverse
+            // This handles reroutes, custom passthrough nodes, etc.
+            const firstInput = currentNode.inputs?.[0];
+            if (firstInput && firstInput.link) {
+                const linkInfo = currentNode.graph.links[firstInput.link];
+                const upstreamNode = linkInfo ? currentNode.graph.getNodeById(linkInfo.origin_id) : null;
+                if (upstreamNode) {
+                    logger.verbose(`[ImageUtils] Node '${currentNode.title || currentNode.type}' has no image data, traversing to input (depth ${depth})`);
+                    currentNode = upstreamNode;
+                    depth++;
+                    continue;
+                }
+            }
+
+            // No image data and no input to traverse
+            logger.verbose(`[ImageUtils] Node '${currentNode.title || currentNode.type}' has no image data and no input connection`);
+            return null;
         }
 
-        logger.verbose(`Source node type: ${sourceNode.type} - not a LoadImage node`);
+        logger.verbose(`[ImageUtils] Max depth (${maxDepth}) exceeded in connection chain`);
         return null;
     },
 
