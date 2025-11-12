@@ -5,6 +5,34 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2025-11-12
+
+### Fixed
+- **SCALE Tooltip Timeout** - Tooltip now stays visible while hovering over handle
+  - Previous behavior: Tooltip disappeared after 2 seconds even while hovering
+  - New behavior: Tooltip remains visible indefinitely while mouse over handle
+  - Timeout only starts when mouse leaves the handle area
+  - After leaving handle, 2-second grace period before tooltip disappears
+- **SCALE Tooltip Hover Precision** - Tooltip only appears when hovering over green handle knob
+  - Previous behavior: Tooltip showed for entire slider track, handle, and value text
+  - New behavior: Tooltip only shows when directly over the small green handle
+  - Less intrusive - allows viewing elements below SCALE widget without tooltip blocking
+  - More precise hover target reduces accidental tooltip triggering
+
+### Technical
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Lines 1877-1916: Refactored pointermove handler to detect hover state transitions
+  - Timeout only starts on hover→not-hover transition (wasHovering && !this.isHovering)
+  - While hovering, any pending timeout is cleared (keeps tooltip visible)
+  - Hover detection simplified to `this.isInBounds(pos, this.hitAreas.handle)` only
+  - Removed slider track and value text from hover detection areas
+
+### Benefits
+- ✅ **Better UX for Dense Workflows**: Tooltip doesn't block view of nodes below
+- ✅ **Persistent Calculations**: Users can examine tooltip without it disappearing
+- ✅ **Precise Interaction**: Only shows tooltip when intentionally hovering over handle
+- ✅ **Natural Behavior**: Tooltip stays as long as you're hovering, hides when you leave
+
 ## [0.6.4] - 2025-11-12
 
 ### Fixed
