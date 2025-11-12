@@ -2893,12 +2893,14 @@ class ImageModeWidget {
                 // dimensionLogger.debug('[TOGGLE] Image mode toggled:', oldState, '→', newState);
                 logger.debug(`Image mode toggled: ${oldState} → ${this.value.on}`);
 
-                // NEW: Mutual exclusivity - disable custom_ratio when enabling USE IMAGE DIMS in AR Only mode
-                if (newState === true && this.value.value === 0) {  // Turning ON and in AR Only mode
+                // NEW: Mutual exclusivity - disable custom_ratio when enabling USE IMAGE DIMS (any mode)
+                // Both Exact Dims and AR Only use image data, so both are mutually exclusive with custom_ratio
+                if (newState === true) {  // Turning ON (either Exact Dims or AR Only)
                     const customRatioWidget = node.widgets?.find(w => w.name === "custom_ratio");
                     if (customRatioWidget && customRatioWidget.value === true) {
                         customRatioWidget.value = false;
-                        logger.info('[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with USE IMAGE DIMS (AR Only)');
+                        const modeName = this.modes[this.value.value];
+                        logger.info(`[ImageMode] Auto-disabled custom_ratio due to mutual exclusivity with USE IMAGE DIMS (${modeName})`);
                     }
                 }
 
@@ -3855,13 +3857,15 @@ app.registerExtension({
                             originalCallback.call(customRatioWidget, value);
                         }
 
-                        // NEW: Mutual exclusivity - disable USE IMAGE DIMS if enabling custom_ratio and imageMode is AR Only
+                        // NEW: Mutual exclusivity - disable USE IMAGE DIMS if enabling custom_ratio (any mode)
+                        // Both Exact Dims and AR Only use image data, so both are mutually exclusive with custom_ratio
                         if (value === true) {
                             const imageModeWidget = this.widgets.find(w => w.name === "image_mode");
-                            if (imageModeWidget && imageModeWidget.value?.on && imageModeWidget.value?.value === 0) {
-                                // USE IMAGE DIMS is ON and in AR Only mode
+                            if (imageModeWidget && imageModeWidget.value?.on) {
+                                // USE IMAGE DIMS is ON (either Exact Dims or AR Only)
+                                const modeName = imageModeWidget.value?.value === 0 ? 'AR Only' : 'Exact Dims';
                                 imageModeWidget.value.on = false;
-                                logger.info('[custom_ratio] Auto-disabled USE IMAGE DIMS (AR Only) due to mutual exclusivity');
+                                logger.info(`[custom_ratio] Auto-disabled USE IMAGE DIMS (${modeName}) due to mutual exclusivity`);
                             }
                         }
 

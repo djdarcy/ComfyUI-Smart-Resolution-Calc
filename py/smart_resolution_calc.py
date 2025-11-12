@@ -1343,16 +1343,29 @@ class SmartResolutionCalc:
 
         logger.debug(f"Mode display from calculator: '{mode_display}' (priority={result['priority']}, mode={result['mode']}, conflicts={len(result['conflicts'])})")
 
-        info = f"Mode: {mode_display} | {info_detail} | Div: {div_info} | Latent: {latent_source}"
+        # Build base info string
+        base_info = f"Mode: {mode_display} | {info_detail}"
 
-        # Don't prepend mode_info since AR source is now integrated into mode display
-        # (mode_info was just "From Image (AR: X)" which is now part of the mode label)
-        if mode_info and exact_dims:
-            # Only prepend for Exact Dims mode since it has different info
-            info = f"{mode_info} | {info}"
-            # Add override warning if exact dims mode overrides manual settings
-            if override_warning:
-                info = f"⚠️ [Manual W/H Ignored] | {info}"
+        # Add AR if not already present in mode_display or info_detail
+        # Use regex for word boundaries to avoid matching "Scalar", "Barcelona", etc.
+        import re
+        info_so_far = base_info.lower()
+        has_ar_mention = (
+            re.search(r'\bar\b', info_so_far) or  # "ar" as standalone word (e.g., " ar ", "ar:", "(ar)")
+            'image ar' in info_so_far or          # "image ar" phrase
+            'image_ar' in info_so_far             # "image_ar" identifier
+        )
+
+        if not has_ar_mention:
+            # AR not mentioned yet, add it explicitly
+            info = f"{base_info} | AR: {calculated_ar} | Div: {div_info} | Latent: {latent_source}"
+        else:
+            # AR already mentioned in mode or detail, don't duplicate
+            info = f"{base_info} | Div: {div_info} | Latent: {latent_source}"
+
+        # Add override warning if exact dims mode overrides manual settings
+        if exact_dims and override_warning:
+            info = f"⚠️ [Manual W/H Ignored] | {info}"
 
         # ALWAYS log final results
         print(f"[SmartResCalc] RESULT: {info}, resolution={resolution}")
