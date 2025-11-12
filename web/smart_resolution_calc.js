@@ -969,6 +969,34 @@ class ScaleWidget {
 
         const baseW = dimSource.baseW;
         const baseH = dimSource.baseH;
+
+        // Check for pending state (null dimensions from generator nodes)
+        // When pending, return null values for all calculated fields
+        if (baseW === null || baseH === null) {
+            // Get divisor for return object (still needed for tooltip display)
+            const divisibleWidget = node.widgets.find(w => w.name === "divisible_by");
+            const divisor = divisibleWidget?.value === "Exact" ? 1 : parseInt(divisibleWidget?.value || 16);
+
+            return {
+                baseW: null,
+                baseH: null,
+                baseMp: null,
+                scaledW: null,
+                scaledH: null,
+                finalW: null,
+                finalH: null,
+                finalMp: null,
+                divisor: divisor,
+                aspectW: dimSource.ar.aspectW,  // Will be null for pending
+                aspectH: dimSource.ar.aspectH,  // Will be null for pending
+                mode: dimSource.mode,
+                priority: dimSource.priority,
+                description: dimSource.description,
+                conflicts: dimSource.conflicts
+            };
+        }
+
+        // Normal calculation path (dimensions available)
         const baseMp = (baseW * baseH) / 1_000_000;
 
         // Apply scale
@@ -1136,6 +1164,13 @@ class ScaleWidget {
             // dimensionLogger.debug('[REFRESH] Tier 3: No dimensions available, clearing cache');
             logger.verbose('No dimensions available from any source, clearing cache');
             this.imageDimensionsCache = null;
+
+            // Update MODE widget to show pending state (for generator nodes like KSampler)
+            // When USE_IMAGE is enabled but no dimensions available yet, Python returns pending modes
+            // This triggers display of "IMG Exact Dims (?:?)" or "WIDTH & IMG AR Only (?:?)"
+            // See: Scenario 1 implementation - pending data display
+            node.updateModeWidget?.(true);
+            logger.debug('Called updateModeWidget for pending state (no dimensions available)');
 
         } finally {
             this.fetchingDimensions = false;
@@ -1348,6 +1383,12 @@ class ScaleWidget {
      * Get AR ratio string - prefers exact AR from Python API over calculated
      */
     _getARRatio(dimSource) {
+        // Check for pending state (explicit null values from Python)
+        // Pending states have ar.source === 'image_pending' with null aspectW/aspectH
+        if (dimSource.ar && dimSource.ar.source === 'image_pending') {
+            return '?:?';  // User wants image AR but data not yet available
+        }
+
         // Prefer exact AR from Python API (avoids rounding errors)
         if (dimSource.ar && dimSource.ar.aspectW && dimSource.ar.aspectH) {
             return `${dimSource.ar.aspectW}:${dimSource.ar.aspectH}`;
@@ -1365,14 +1406,14 @@ class ScaleWidget {
         const { mode, description, activeSources, baseW, baseH } = dimSource;
 
         // Check for special modes first
-        if (description.includes('Exact Dims') || description.includes('exact image')) {
-            // Add AR ratio for exact dims too
+        if (mode === 'exact_dims' || mode === 'exact_dims_pending' || description.includes('Exact Dims') || description.includes('exact image')) {
+            // Add AR ratio for exact dims (will be "?:?" for pending states)
             const ratio = this._getARRatio(dimSource);
             return ratio ? `IMG Exact Dims (${ratio})` : 'IMG Exact Dims';
         }
 
-        // Check for AR Only mode (Priority 4)
-        if (mode === 'ar_only') {
+        // Check for AR Only mode (Priority 4) - includes pending state
+        if (mode === 'ar_only' || mode === 'ar_only_pending') {
             // Extract dimension source from description
             const dimensionSource = description.split(' & ')[0]; // "HEIGHT", "WIDTH", "MEGAPIXEL", or "defaults"
             const ratio = this._getARRatio(dimSource);
@@ -1463,10 +1504,16 @@ class ScaleWidget {
 
         ctx.save();
 
+        // Format values for display, handling pending states (null values)
+        const formatDim = (value) => (value === null || value === undefined) ? '?' : value;
+        const formatMp = (value) => (value === null || value === undefined) ? '?' : value.toFixed(2);
+
         // Format aspect ratio for display
-        const arDisplay = preview.aspectW && preview.aspectH
-            ? `${preview.aspectW}:${preview.aspectH}`
-            : 'unknown';
+        const arDisplay = (preview.aspectW === null || preview.aspectH === null)
+            ? '?:?'  // Pending state - awaiting image data
+            : (preview.aspectW && preview.aspectH)
+                ? `${preview.aspectW}:${preview.aspectH}`
+                : 'unknown';
 
         // Build tooltip content
         const lines = [
@@ -1476,11 +1523,11 @@ class ScaleWidget {
 
         // Note: Mode line removed - now shown in dedicated mode_status widget above aspect_ratio
 
-        // Add dimension calculations
-        lines.push(`Base: ${preview.baseW} × ${preview.baseH} (${preview.baseMp.toFixed(2)} MP, ${arDisplay} AR)`);
+        // Add dimension calculations (handle pending states with ?)
+        lines.push(`Base: ${formatDim(preview.baseW)} × ${formatDim(preview.baseH)} (${formatMp(preview.baseMp)} MP, ${arDisplay} AR)`);
         lines.push(`  ↓`);
-        lines.push(`Scaled: ${preview.scaledW} × ${preview.scaledH}`);
-        lines.push(`After Div/${preview.divisor}: ${preview.finalW} × ${preview.finalH} (${preview.finalMp.toFixed(2)} MP)`);
+        lines.push(`Scaled: ${formatDim(preview.scaledW)} × ${formatDim(preview.scaledH)}`);
+        lines.push(`After Div/${preview.divisor}: ${formatDim(preview.finalW)} × ${formatDim(preview.finalH)} (${formatMp(preview.finalMp)} MP)`);
 
         // Measure text width BEFORE adding conflicts to determine max tooltip width
         ctx.font = "bold 11px monospace"; // Use bold for measurement (widest case)

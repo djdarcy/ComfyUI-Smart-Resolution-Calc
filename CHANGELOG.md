@@ -5,6 +5,55 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2025-11-12
+
+### Added
+- **Pending Data Display (Scenario 1)** - Generator node workflows now show user intent before execution
+  - Mode(AR) displays `(?:?)` when image dimensions unknown (KSampler, RandomNoise, etc.)
+  - Shows `"IMG Exact Dims (?:?)"` when Exact Dims enabled with generator
+  - Shows `"WIDTH & IMG AR Only (?:?)"` when AR Only enabled with dimension widgets
+  - Acknowledges user's image mode choice instead of showing misleading defaults
+  - Updates to actual values after workflow execution when data becomes available
+
+### Fixed
+- **Reconnection Mode Updates** - Mode(AR) now updates immediately when connecting generator nodes
+  - Previously stayed on default modes after reconnecting to generator
+  - Now correctly shows pending state `(?:?)` on reconnection
+  - Same pattern as Scenario 2 fix, applied to generator node case
+- **AR Only Info Output** - Info now shows calculated dimensions for AR Only mode
+  - Before: `"Using image AR 1:1"` (missing final dimensions)
+  - After: `"HEIGHT: 1000, calculated W: 1000 from image AR 1:1"`
+  - Shows which dimension source active and what was calculated
+  - Includes all four AR Only variants: WIDTH, HEIGHT, MEGAPIXEL, defaults
+- **Tooltip Null Handling** - Scale widget tooltip shows `?` for unknown values
+  - Prevents `0.00 MP` when dimensions pending (now shows `? MP`)
+  - Shows `? × ?` for all unknown dimension values
+  - Applies to Base, Scaled, and Final dimensions in tooltip
+
+### Technical
+- **Python Changes** (`py/smart_resolution_calc.py`):
+  - Lines 143-187: `_calculate_exact_dims()` returns `exact_dims_pending` mode when no image_info
+  - Lines 282-305: Added `_get_primary_dimension_source()` helper to determine active dimension
+  - Lines 315-337: `_calculate_ar_only()` returns `ar_only_pending` mode when no image_info
+  - Lines 1143-1153: Enhanced AR Only info output to show calculated dimensions
+  - All pending modes return explicit `None` values, never `undefined`
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Lines 1351-1355: `_getARRatio()` returns `'?:?'` when `ar.source === 'image_pending'`
+  - Lines 1381-1393: `getSimplifiedModeLabel()` handles `exact_dims_pending` and `ar_only_pending` modes
+  - Lines 1473-1495: Tooltip formatting with `formatDim()` and `formatMp()` helpers for null values
+  - Lines 973-996: `calculatePreview()` early return with all null values for pending states
+  - Lines 1140-1145: `refreshImageDimensions()` calls `updateModeWidget()` at Tier 3 for generators
+
+### Benefits
+- ✅ **User Intent Preserved**: Shows what user chose (`IMG Exact Dims`) even when data pending
+- ✅ **No Misleading Defaults**: Clearly indicates unknown values with `?` instead of fallback dimensions
+- ✅ **Generator Node Support**: Works with KSampler, RandomNoise, and any node without file path
+- ✅ **Informative Output**: Info string shows calculation logic and final dimensions
+
+### Related Issues
+- Completes Issue #32 Scenario 1 - Pending Data Display
+- Related to Issue #33 - Future enhancement for dynamic dimension inputs
+
 ## [0.6.2] - 2025-11-11
 
 ### Fixed

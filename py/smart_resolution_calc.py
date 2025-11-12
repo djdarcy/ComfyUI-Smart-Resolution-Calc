@@ -141,14 +141,35 @@ class DimensionSourceCalculator:
     # ========================================
 
     def _calculate_exact_dims(self, widgets, runtime_context):
-        """Priority 1: USE IMAGE DIMS = Exact Dims"""
+        """Priority 1: USE IMAGE DIMS = Exact Dims
+
+        Returns actual dimensions when image_info available, or pending state
+        when user enabled Exact Dims but image data not yet available (e.g., generator nodes).
+        """
         image_info = runtime_context.get('image_info')
 
         if not image_info:
-            # No image loaded, fall back to defaults
-            logger.debug('[Calculator] No image for Exact Dims, falling back to defaults')
-            return self._calculate_defaults(widgets)
+            # User wants image dimensions but data unavailable (generator node, pre-execution)
+            # Return pending state preserving user intent
+            logger.debug('[Calculator] Exact Dims requested but image_info unavailable - returning pending state')
+            return {
+                'mode': 'exact_dims_pending',
+                'priority': 1,
+                'baseW': None,  # Explicitly None, not undefined
+                'baseH': None,
+                'source': 'image_pending',
+                'ar': {
+                    'aspectW': None,
+                    'aspectH': None,
+                    'ratio': None,
+                    'source': 'image_pending'
+                },
+                'conflicts': [],
+                'description': 'IMG Exact Dims (awaiting image data)',
+                'activeSources': []
+            }
 
+        # Image info available - normal calculation
         w = image_info['width']
         h = image_info['height']
         ar = self._compute_ar_from_dimensions(w, h)
@@ -258,14 +279,62 @@ class DimensionSourceCalculator:
             'activeSources': ['HEIGHT', 'MEGAPIXEL']
         }
 
+    def _get_primary_dimension_source(self, widgets):
+        """
+        Determine which dimension source would be active in AR Only mode.
+
+        Returns the primary dimension source name based on widget state:
+        - 'WIDTH' if width enabled
+        - 'HEIGHT' if height enabled
+        - 'MEGAPIXEL' if megapixel enabled
+        - 'defaults' if no dimension widgets enabled
+
+        Args:
+            widgets: Widget state dictionary
+
+        Returns:
+            str: Dimension source name ('WIDTH', 'HEIGHT', 'MEGAPIXEL', or 'defaults')
+        """
+        if widgets.get('width_enabled', False):
+            return 'WIDTH'
+        elif widgets.get('height_enabled', False):
+            return 'HEIGHT'
+        elif widgets.get('mp_enabled', False):
+            return 'MEGAPIXEL'
+        else:
+            return 'defaults'
+
     def _calculate_ar_only(self, widgets, runtime_context):
-        """Priority 4: USE IMAGE DIMS = AR Only (image AR + dimension widgets)"""
+        """Priority 4: USE IMAGE DIMS = AR Only (image AR + dimension widgets)
+
+        Returns image AR with dimension widget when image_info available, or pending state
+        when user enabled AR Only but image data not yet available (e.g., generator nodes).
+        """
         image_info = runtime_context.get('image_info')
 
         if not image_info:
-            # No image, fall back to defaults
-            logger.debug('[Calculator] No image for AR Only, falling back to defaults')
-            return self._calculate_defaults(widgets)
+            # User wants AR Only but data unavailable (generator node, pre-execution)
+            # Return pending state preserving user intent
+            dimension_source = self._get_primary_dimension_source(widgets)
+
+            logger.debug(f'[Calculator] AR Only requested but image_info unavailable - returning pending state with {dimension_source}')
+
+            return {
+                'mode': 'ar_only_pending',
+                'priority': 4,
+                'baseW': None,  # Explicitly None, not undefined
+                'baseH': None,
+                'source': 'image_pending',
+                'ar': {
+                    'aspectW': None,
+                    'aspectH': None,
+                    'ratio': None,
+                    'source': 'image_pending'
+                },
+                'conflicts': [],
+                'description': f"{dimension_source} & IMG AR Only (awaiting image data)",
+                'activeSources': [dimension_source] if dimension_source != 'defaults' else []
+            }
 
         # Get image AR
         img_w = image_info['width']
@@ -1071,7 +1140,17 @@ class SmartResolutionCalc:
             elif result['mode'] == 'mp_height_explicit':
                 info_detail_base = f"Calculated W: {w} from {megapixel_val}MP"
         elif result['priority'] == 4:  # AR Only
-            info_detail_base = f"Using image AR {calculated_ar}"
+            # Show which dimension source is active and what was calculated
+            active_sources = result.get('activeSources', [])
+            if 'WIDTH' in active_sources:
+                info_detail_base = f"WIDTH: {w}, calculated H: {h} from image AR {calculated_ar}"
+            elif 'HEIGHT' in active_sources:
+                info_detail_base = f"HEIGHT: {h}, calculated W: {w} from image AR {calculated_ar}"
+            elif 'MEGAPIXEL' in active_sources:
+                info_detail_base = f"Calculated {w}×{h} from {megapixel_val}MP and image AR {calculated_ar}"
+            else:
+                # defaults with image AR
+                info_detail_base = f"Calculated {w}×{h} from default 1.0MP and image AR {calculated_ar}"
         elif result['priority'] == 5:  # Single dimension with AR
             if 'WIDTH' in result.get('activeSources', []):
                 info_detail_base = f"Calculated H: {h}"
