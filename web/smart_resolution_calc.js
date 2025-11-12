@@ -994,10 +994,15 @@ class ScaleWidget {
         const imageModeWidget = node.widgets?.find(w => w.name === "image_mode");
         dimensionLogger.verbose('[REFRESH] imageModeWidget:', imageModeWidget);
         dimensionLogger.verbose('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
+
+        // DIAGNOSTIC: Log early return reason (reconnect debugging)
+        logger.debug('[REFRESH] imageModeWidget exists:', !!imageModeWidget);
+        logger.debug('[REFRESH] imageModeWidget.value:', imageModeWidget?.value);
+        logger.debug('[REFRESH] imageModeWidget.value.on:', imageModeWidget?.value?.on);
+
         if (!imageModeWidget?.value?.on) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] USE_IMAGE disabled, clearing cache');
-            logger.verbose('USE_IMAGE disabled, clearing dimension cache');
+            logger.info('[REFRESH] ✗ Early return: USE_IMAGE disabled, clearing cache');
             return;
         }
 
@@ -1006,10 +1011,14 @@ class ScaleWidget {
         const link = imageInput?.link;
         dimensionLogger.verbose('[REFRESH] imageInput:', imageInput);
         dimensionLogger.verbose('[REFRESH] link:', link);
+
+        // DIAGNOSTIC: Log link state
+        logger.debug('[REFRESH] imageInput exists:', !!imageInput);
+        logger.debug('[REFRESH] link:', link);
+
         if (!link) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] No image connected, clearing cache');
-            logger.verbose('No image connected, clearing dimension cache');
+            logger.info('[REFRESH] ✗ Early return: No image connected, clearing cache');
             return;
         }
 
@@ -1017,10 +1026,15 @@ class ScaleWidget {
         const linkInfo = node.graph.links[link];
         const sourceNode = linkInfo ? node.graph.getNodeById(linkInfo.origin_id) : null;
         dimensionLogger.verbose('[REFRESH] sourceNode:', sourceNode);
+
+        // DIAGNOSTIC: Log source node state
+        logger.debug('[REFRESH] linkInfo:', linkInfo);
+        logger.debug('[REFRESH] sourceNode exists:', !!sourceNode);
+        logger.debug('[REFRESH] sourceNode type:', sourceNode?.type);
+
         if (!sourceNode) {
             this.imageDimensionsCache = null;
-            // dimensionLogger.debug('[REFRESH] Source node not found, clearing cache');
-            logger.verbose('Source node not found, clearing dimension cache');
+            logger.info('[REFRESH] ✗ Early return: Source node not found, clearing cache');
             return;
         }
 
@@ -1028,21 +1042,26 @@ class ScaleWidget {
         const filePath = ImageDimensionUtils.getImageFilePath(sourceNode);
         dimensionLogger.debug('[REFRESH] filePath:', filePath);
         dimensionLogger.verbose('[REFRESH] Current cache:', this.imageDimensionsCache);
+
+        // DIAGNOSTIC: Log cache validity check
+        logger.debug('[REFRESH] filePath from source:', filePath);
+        logger.debug('[REFRESH] cached path:', this.imageDimensionsCache?.path);
+        logger.debug('[REFRESH] cache valid?:', this.imageDimensionsCache?.path === filePath && filePath);
+
         if (this.imageDimensionsCache?.path === filePath && filePath) {
-            // dimensionLogger.debug('[REFRESH] Using cached dimensions for:', filePath);
-            logger.verbose(`Using cached dimensions for ${filePath}`);
+            logger.info(`[REFRESH] ✗ Early return: Using cached dimensions for ${filePath} (cache still valid)`);
             return; // Cache still valid
         }
 
         // Prevent concurrent fetches
         if (this.fetchingDimensions) {
-            // dimensionLogger.debug('[REFRESH] Already fetching, skipping');
-            logger.verbose('Already fetching dimensions, skipping');
+            logger.info('[REFRESH] ✗ Early return: Already fetching dimensions, skipping');
             return;
         }
 
         // Fetch using hybrid strategy
         dimensionLogger.debug('[REFRESH] Starting hybrid fetch strategy');
+        logger.info('[REFRESH] ✓ Starting dimension fetch (no early returns triggered)');
         this.fetchingDimensions = true;
         try {
             // Tier 1: Server endpoint (immediate for LoadImage nodes)
@@ -1064,7 +1083,9 @@ class ScaleWidget {
 
                     // Invalidate dimension source cache when image dimensions change
                     node.dimensionSourceManager?.invalidateCache();
-                    node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+                    // Update MODE widget after dimensions loaded (forceRefresh=true to bypass cache)
+                    // This ensures runtime_context.image_info is populated when Python calculates
+                    node.updateModeWidget?.(true);
 
                     node.setDirtyCanvas(true, true);
                     return;
@@ -1093,7 +1114,9 @@ class ScaleWidget {
 
                 // Invalidate dimension source cache when image dimensions change
                 node.dimensionSourceManager?.invalidateCache();
-                node.updateModeWidget?.(); // Update MODE widget after dimensions loaded
+                // Update MODE widget after dimensions loaded (forceRefresh=true to bypass cache)
+                // This ensures runtime_context.image_info is populated when Python calculates
+                node.updateModeWidget?.(true);
 
                 node.setDirtyCanvas(true, true);
                 return;
@@ -4116,6 +4139,17 @@ app.registerExtension({
                             } else if (copyButtonWidget) {
                                 visibilityLogger.debug(`copy_from_image already visible at ${this.widgets.indexOf(copyButtonWidget)}`);
                             }
+
+                            // 7. After ALL widgets restored, refresh image dimensions
+                            // CRITICAL: Must happen AFTER image_mode widget restored, otherwise refreshImageDimensions
+                            // can't find the widget and returns early thinking USE_IMAGE is disabled
+                            // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
+                            if (this.scaleWidgetInstance && this.scaleWidgetInstance.refreshImageDimensions) {
+                                logger.info('[Visibility] Widgets restored, triggering dimension refresh');
+                                this.scaleWidgetInstance.refreshImageDimensions(this);
+                            } else {
+                                logger.debug('[Visibility] No scale widget or refresh method found');
+                            }
                         } else {
                             visibilityLogger.error("Cannot find fill_color for button placement");
                         }
@@ -4153,15 +4187,16 @@ app.registerExtension({
 
                             this.widgets.splice(item.currentIndex, 1);
                         });
-                    }
 
-                    // Trigger Mode(AR) widget update with forced refresh (Scenario 2)
-                    // forceRefresh=true bypasses cache, ensures immediate recalculation
-                    // When image disconnects: Backend state overridden, Mode(AR) shows defaults
-                    // When image connects: Backend state valid, Mode(AR) shows image-based mode
-                    if (this.updateModeWidget) {
-                        this.updateModeWidget(true);  // Force refresh to bypass cache
-                        visibilityLogger.debug('Triggered updateModeWidget(forceRefresh=true) due to image connection change');
+                        // Update Mode(AR) for disconnect (backend state overridden, show defaults)
+                        // NOTE: For RECONNECT, updateModeWidget() is called in refreshImageDimensions()
+                        // after imageDimensionsCache is populated. This fixes timing issue where
+                        // runtime_context.image_info was empty on reconnect.
+                        // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
+                        if (this.updateModeWidget) {
+                            this.updateModeWidget(true);  // Force refresh to bypass cache
+                            visibilityLogger.debug('Triggered updateModeWidget(forceRefresh=true) for disconnect');
+                        }
                     }
 
                     // Resize node to accommodate shown/hidden widgets
@@ -4612,15 +4647,9 @@ app.registerExtension({
                                 imageModeWidget.imageDisconnected = false;
                             }
 
-                            // Trigger dimension cache refresh for scale tooltip
-                            if (scaleWidget && scaleWidget.refreshImageDimensions) {
-                                // dimensionLogger.debug('[CONNECTION] Calling refreshImageDimensions for connected image');
-                                logger.info('[Connection] Image connected, triggering scale dimension refresh');
-                                scaleWidget.refreshImageDimensions(this);
-                            } else {
-                                // dimensionLogger.debug('[CONNECTION] No scale widget or refresh method found');
-                                logger.debug('[Connection] No scale widget or refresh method found');
-                            }
+                            // NOTE: refreshImageDimensions() moved to updateImageOutputVisibility()
+                            // Must be called AFTER widgets are restored, otherwise image_mode widget not found
+                            // See: 2025-11-11__20-09-38__full-postmortem_reconnect-timing-root-cause.md
 
                             logger.debug('Image input connected - USE_IMAGE widget enabled');
                         } else {
