@@ -5,6 +5,54 @@ All notable changes to ComfyUI Smart Resolution Calculator will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2025-11-12
+
+### Fixed
+- **Info Output Duplication** - Removed duplicate "From Image" and "Scale" information
+  - Eliminated mode_info prepending that showed dimensions twice
+  - Info output now shows clean, consolidated information
+  - Example fix: `From Image (Exact: 1200×1200) @ 1.2x | Mode: ... | From Image: 1200×1200 | Scale: 1.2x` → `Mode: USE IMAGE DIMS = Exact Dims | From Image: 1200×1200 | Scale: 1.2x`
+- **Aspect Ratio Field Addition** - Info output now always includes AR when not already mentioned
+  - Conditionally adds `| AR: X:Y |` field to info string
+  - Uses regex word boundaries to detect existing AR mentions (avoids false positives like "Scalar")
+  - Ensures AR is visible for all modes (Exact Dims, WIDTH/HEIGHT explicit, etc.)
+  - Case-insensitive detection with `.lower()` preprocessing
+- **Mutual Exclusivity Bug** - Fixed incomplete mutual exclusivity between custom_ratio and USE IMAGE DIMS
+  - Both Exact Dims and AR Only modes now properly disable custom_ratio when enabled
+  - custom_ratio enabling now properly disables USE IMAGE DIMS regardless of mode
+  - Previous bug: Exact Dims mode allowed both custom_ratio and USE IMAGE DIMS enabled simultaneously
+  - AR Only mode already worked, but Exact Dims case was missing
+
+### Changed
+- **Info Output Display** - Enhanced info output to show latent source
+  - Now shows "Latent: VAE Encoded" when VAE input connected
+  - Clearly indicates whether using empty latent (txt2img) or VAE-encoded latent (img2img)
+  - Visible in node info output and new screenshot
+
+### Technical
+- **Python Changes** (`py/smart_resolution_calc.py`):
+  - Lines 1346-1366: Removed duplicate mode_info prepending, added intelligent AR field detection
+  - Uses `re.search(r'\bar\b', info_so_far)` with word boundaries for accurate AR detection
+  - Conditionally adds `| AR: X:Y |` when AR not already mentioned in mode display or info detail
+- **JavaScript Changes** (`web/smart_resolution_calc.js`):
+  - Line 2898: Removed `&& this.value.value === 0` condition to extend mutual exclusivity to both modes
+  - Line 3864: Removed `&& imageModeWidget.value?.value === 0` condition to cover both Exact Dims and AR Only
+  - Both ImageModeWidget and custom_ratio callbacks now enforce mutual exclusivity bidirectionally
+
+### Benefits
+- ✅ **Cleaner Info Output**: No duplicate information, easier to read calculation results
+- ✅ **AR Visibility**: Aspect ratio always visible in info output for all modes
+- ✅ **Consistent Widget Behavior**: Mutual exclusivity properly enforced for all image modes
+- ✅ **Better UX**: Users can see VAE encoding status in info output
+
+### Notes
+- Screenshot updated to show "Latent: VAE Encoded" in info output
+- README.md caption updated to reflect new VAE visibility feature
+- Fixes discovered during Scenario 1 testing and polishing phase
+
+### Related Documents
+- 2025-11-12__14-23-05__context-postmortem_scenario-1-polish-and-next-work.md
+
 ## [0.6.3] - 2025-11-12
 
 ### Added

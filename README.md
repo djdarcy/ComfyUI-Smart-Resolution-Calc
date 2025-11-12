@@ -13,7 +13,7 @@ Smart Resolution Calculator brings intuitive dimension control to ComfyUI workfl
 
 ![Smart Resolution Calculator in action](docs/images/Smart-Res-Calculator-node_outputs_and-ClownSharKSampler.jpg)
 
-*Example workflow showing the Smart Resolution Calculator with disabled "image" input (AR Only mode), custom aspect ratio 5.2:2.5, WIDTH enabled at 1024, SCALE at 1.10x, calculating height and outputting 1120×1408 available through "image" or "latent" to be sent to KSampler.*
+*Example workflow showing the Smart Resolution Calculator with disabled "image" input (AR Only mode), custom aspect ratio 5.2:2.5, WIDTH enabled at 1024, SCALE at 1.10x, calculating height and outputting 1120×1408. The info output shows "Latent: VAE Encoded" indicating VAE encoding is active. Output "latent" connects to KSampler for img2img workflow.*
 
 ## Features
 
@@ -156,7 +156,7 @@ Connect an IMAGE output to automatically extract dimensions or aspect ratio. See
 - `preview` (IMAGE) - Visual grid preview with dimensions and aspect ratio overlay
 - `image` (IMAGE) - Generated or transformed image at calculated dimensions (4 transform modes + empty)
 - `latent` (LATENT) - Ready-to-use latent tensor for sampling (empty latent for txt2img, or VAE-encoded image for img2img if VAE connected)
-- `info` (STRING) - Calculation mode and computed values
+- `info` (STRING) - Calculation mode, computed values, and latent source (e.g., "Latent: VAE Encoded" when VAE connected)
 
 **Note**: `preview` is always a visualization grid, while `image` is the actual generated/transformed image output.
 
