@@ -116,9 +116,18 @@ class DimensionSourceCalculator:
             return self._calculate_mp_height_explicit(widgets)
 
         # PRIORITY 4: AR Only mode (image AR + dimension widgets)
+        # DIAGNOSTIC: Detailed logging for Priority 4 check (Phase 1 - Reconnect issue diagnosis)
+        image_mode_enabled = widgets.get('image_mode_enabled')
+        image_mode_value = widgets.get('image_mode_value')
+        print(f'[Calculator] Priority 4 check: image_mode_enabled={image_mode_enabled}, image_mode_value={image_mode_value}')
+        print(f'[Calculator] Priority 4 condition: {image_mode_enabled} AND {image_mode_value} == 0 = {image_mode_enabled and image_mode_value == 0}')
+
         if widgets.get('image_mode_enabled') and widgets.get('image_mode_value') == 0:
             logger.debug('[Calculator] Taking Priority 4: AR Only')
+            print('[Calculator] ✓ Priority 4 triggered - calling _calculate_ar_only()')
             return self._calculate_ar_only(widgets, runtime_context)
+        else:
+            print(f'[Calculator] ✗ Priority 4 NOT triggered - condition failed')
 
         # PRIORITY 5: Single dimension with AR
         if has_width:
@@ -259,12 +268,20 @@ class DimensionSourceCalculator:
 
     def _calculate_ar_only(self, widgets, runtime_context):
         """Priority 4: USE IMAGE DIMS = AR Only (image AR + dimension widgets)"""
+        # DIAGNOSTIC: Check for image_info (Phase 1 - Reconnect issue diagnosis)
+        print(f'[AR-ONLY] _calculate_ar_only() called')
+        print(f'[AR-ONLY] runtime_context: {runtime_context}')
         image_info = runtime_context.get('image_info')
+        print(f'[AR-ONLY] image_info present: {bool(image_info)}')
+        print(f'[AR-ONLY] image_info value: {image_info}')
 
         if not image_info:
             # No image, fall back to defaults
             logger.debug('[Calculator] No image for AR Only, falling back to defaults')
+            print('[AR-ONLY] ✗ No image_info - falling back to defaults (THIS IS THE BUG!)')
             return self._calculate_defaults(widgets)
+        else:
+            print(f'[AR-ONLY] ✓ image_info present: {image_info["width"]}×{image_info["height"]}')
 
         # Get image AR
         img_w = image_info['width']

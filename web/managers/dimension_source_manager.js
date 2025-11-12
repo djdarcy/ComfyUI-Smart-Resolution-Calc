@@ -39,11 +39,21 @@ export class DimensionSourceManager {
     async getActiveDimensionSource(forceRefresh = false, runtimeContext = {}) {
         const now = Date.now();
 
+        // DIAGNOSTIC: Log cache check (Phase 1 - Reconnect issue diagnosis)
+        logger.debug('[CACHE] getActiveDimensionSource called');
+        logger.debug('[CACHE] forceRefresh:', forceRefresh);
+        logger.debug('[CACHE] cache.dimensionSource exists:', !!this.cache.dimensionSource);
+        logger.debug('[CACHE] cache age:', now - this.cache.timestamp, 'ms');
+        logger.debug('[CACHE] cache.ttl:', this.cache.ttl, 'ms');
+
         // Return cached result if valid
         if (!forceRefresh && this.cache.dimensionSource &&
             (now - this.cache.timestamp < this.cache.ttl)) {
+            logger.debug('[CACHE] Returning cached result');
             return this.cache.dimensionSource;
         }
+
+        logger.debug('[CACHE] Cache bypassed, calling Python API');
 
         // Calculate fresh result with runtime context (calls Python API)
         const result = await this._calculateDimensionSource(runtimeContext);
@@ -51,6 +61,8 @@ export class DimensionSourceManager {
         // Update cache
         this.cache.dimensionSource = result;
         this.cache.timestamp = now;
+
+        logger.debug('[CACHE] New result cached, mode:', result?.dimSource?.mode);
 
         return result;
     }
@@ -111,12 +123,12 @@ export class DimensionSourceManager {
             aspect_ratio_dropdown: widgets.aspectRatio?.value || '16:9'
         };
 
-        logger.debug('[Manager] Widget state being sent to Python:', {
-            custom_ratio_enabled: widgetState.custom_ratio_enabled,
-            custom_aspect_ratio: widgetState.custom_aspect_ratio,
-            customRatioToggle_value: widgets.customRatioToggle?.value,
-            customRatioText_value: widgets.customRatioText?.value
-        });
+        // DIAGNOSTIC: Log complete widget state including image_mode (Phase 1)
+        logger.debug('[Manager] widgets.imageMode:', widgets.imageMode);
+        logger.debug('[Manager] widgets.imageMode?.value:', widgets.imageMode?.value);
+        logger.debug('[Manager] widgetState.image_mode_enabled:', widgetState.image_mode_enabled);
+        logger.debug('[Manager] widgetState.image_mode_value:', widgetState.image_mode_value);
+        logger.debug('[Manager] Full widgetState being sent to Python:', widgetState);
 
         // Build runtime context for Python API
         const apiContext = {};
@@ -142,6 +154,10 @@ export class DimensionSourceManager {
             logger.debug(`  UI state: image_mode_enabled=${uiState} (toggle visible to user)`);
             logger.debug(`  Backend state: image_mode_enabled=false (sent to Python)`);
             logger.debug(`  UX: Toggle stays ON for easy reconnection, but calculations use defaults`);
+        } else {
+            // DIAGNOSTIC: Log when validation passes (Phase 1)
+            logger.debug(`[Manager] Image source VALID - NOT overriding backend state`);
+            logger.debug(`  Backend state: image_mode_enabled=${widgetState.image_mode_enabled}, image_mode_value=${widgetState.image_mode_value}`);
         }
 
         try {

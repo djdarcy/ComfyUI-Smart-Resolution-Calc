@@ -684,6 +684,7 @@ class InfoIcon {
     }
 
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -1880,6 +1881,7 @@ class ScaleWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -2525,6 +2527,7 @@ class DimensionWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -2852,6 +2855,7 @@ class ImageModeWidget {
      * Check if position is within bounds
      */
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -3059,6 +3063,7 @@ class ColorPickerButton {
     }
 
     isInBounds(pos, bounds) {
+        if (!bounds) return false;  // Guard against undefined bounds
         return pos[0] >= bounds.x &&
                pos[0] <= bounds.x + bounds.width &&
                pos[1] >= bounds.y &&
@@ -3495,7 +3500,13 @@ app.registerExtension({
                 // Add image source validation method to node (Scenario 2: Invalid Source Detection)
                 // Called by DimensionSourceManager to detect disabled sources through chain traversal
                 this._validateImageSource = function(imageInput, maxDepth = 10) {
+                    // DIAGNOSTIC: Log validation start (Phase 1 - Reconnect issue diagnosis)
+                    logger.debug('[VALIDATION] Starting validation');
+                    logger.debug('[VALIDATION] imageInput:', imageInput);
+                    logger.debug('[VALIDATION] imageInput.link:', imageInput?.link);
+
                     if (!imageInput || !imageInput.link) {
+                        logger.debug('[VALIDATION] Result: no_connection');
                         return { valid: false, reason: 'no_connection', severity: 'info' };
                     }
 
@@ -3506,7 +3517,13 @@ app.registerExtension({
 
                     while (depth < maxDepth) {
                         const link = this.graph.links[currentInput.link];
+
+                        // DIAGNOSTIC: Log link lookup (Phase 1)
+                        logger.debug(`[VALIDATION] Depth ${depth}: Looking up link ${currentInput.link}`);
+                        logger.debug(`[VALIDATION] Depth ${depth}: Link object exists:`, !!link);
+
                         if (!link) {
+                            logger.debug(`[VALIDATION] Result: broken_link at depth ${depth}, chain:`, chain);
                             return {
                                 valid: false,
                                 reason: 'broken_link',
@@ -3579,6 +3596,7 @@ app.registerExtension({
                         }
 
                         // Reached actual source node (not a reroute)
+                        logger.debug(`[VALIDATION] Result: valid, source="${sourceNode.title || sourceNode.type}", depth=${depth}, chain:`, chain);
                         return {
                             valid: true,
                             depth,
@@ -3588,6 +3606,7 @@ app.registerExtension({
                     }
 
                     // Max depth exceeded
+                    logger.debug(`[VALIDATION] Result: max_depth_exceeded at depth ${depth}`);
                     return {
                         valid: false,
                         reason: 'max_depth_exceeded',
@@ -3637,10 +3656,15 @@ app.registerExtension({
                 // Helper function to update MODE widget with current dimension source
                 // @param {boolean} forceRefresh - If true, bypass cache and force recalculation
                 const updateModeWidget = async (forceRefresh = false) => {
+                    // DIAGNOSTIC: Log updateModeWidget call (Phase 1)
+                    logger.debug('[UPDATE-MODE] updateModeWidget called, forceRefresh:', forceRefresh);
+
                     const modeWidget = this.widgets.find(w => w.name === "mode_status");
                     if (modeWidget && this.dimensionSourceManager) {
                         // Get imageDimensionsCache from stored ScaleWidget reference
                         const imageDimensionsCache = this.scaleWidgetInstance?.imageDimensionsCache;
+
+                        logger.debug('[UPDATE-MODE] Calling getActiveDimensionSource with forceRefresh:', forceRefresh);
 
                         // Pass runtime context to manager (includes imageDimensionsCache for AR Only mode)
                         // Calls Python API for single source of truth
@@ -3648,6 +3672,8 @@ app.registerExtension({
                         const dimSource = await this.dimensionSourceManager.getActiveDimensionSource(forceRefresh, {
                             imageDimensionsCache: imageDimensionsCache
                         });
+
+                        logger.debug('[UPDATE-MODE] Received dimSource:', dimSource?.mode, dimSource?.description);
 
                         if (dimSource) {
                             const scaleWidget = this.widgets.find(w => w.name === "scale" && w.type === "custom");
@@ -3905,6 +3931,20 @@ app.registerExtension({
 
                     visibilityLogger.debug(`Image input connected: ${hasConnection}`);
                     visibilityLogger.debug('imageOutputWidgets keys:', Object.keys(this.imageOutputWidgets));
+
+                    // DIAGNOSTIC: Check link existence in graph (Phase 1 - Reconnect issue diagnosis)
+                    if (imageInput && imageInput.link != null) {
+                        const linkObject = this.graph.links[imageInput.link];
+                        visibilityLogger.debug('[RECONNECT-DEBUG] Link ID:', imageInput.link);
+                        visibilityLogger.debug('[RECONNECT-DEBUG] Link exists in graph.links:', !!linkObject);
+                        if (linkObject) {
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Link origin_id:', linkObject.origin_id);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Link target_id:', linkObject.target_id);
+                            const sourceNode = this.graph.getNodeById(linkObject.origin_id);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Source node exists:', !!sourceNode);
+                            visibilityLogger.debug('[RECONNECT-DEBUG] Source node type:', sourceNode?.type);
+                        }
+                    }
 
                     // Update ImageModeWidget's imageDisconnected property (v0.6.1)
                     // This property controls the asymmetric toggle behavior
